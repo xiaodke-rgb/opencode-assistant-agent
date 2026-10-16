@@ -61,6 +61,8 @@ const MSG = {
     `[assistant 守卫] 计数存储暂不可用，已暂停直查额度。请重试或改派 assistant 子代理。`,
   subagentShell: (why) =>
     `[assistant 守卫] ${why}：这条 shell 不会通过，不要换写法重试。改用 read / grep / rg / dbq 等只读工具，或把需求写进「缺」让主代理跑。`,
+  subagentShellOut: (name) =>
+    `[assistant 守卫] 只读白名单外命令（${name}）：不会通过，不要换写法重试。查证改用 read / grep 工具 / rg / jq / dbq；施工类由主代理在 build 做；拿不到就写进「缺」。`,
 }
 
 // ---------------------------------------------------------------- state / io
@@ -429,20 +431,38 @@ function classify(tool, input, mode) {
 }
 
 // assistant 子代理 shell 的「必拒品类」轻判：与 assistant.md 的 deny 规则逐条对应——
-// ① 重定向 / 禁用旗标（子串匹配，语义等同原生 glob）；② 解释器 argv0（任何分段里都不允许）。
-// 只抓原生必然拒绝、且模型最爱换写法重试的形态；其余一律交给原生权限白名单。
+// ① 重定向 / 禁用旗标（子串匹配，语义等同原生 glob）；② 解释器 argv0（任何分段里都不允许）；
+// ③ 只读白名单外的高频「探路」命令（argv0 判定，给指向性文案；原生同样会拒，这里只是把
+//    通用文案换成能解题的指引）。其余一律交给原生权限白名单。
 const SUBAGENT_DENY_SUBSTRS = [" >", "2>", "&>", ">>", "1>", "xxd -r", "--output", "ss -K", "--pre"]
+const SUBAGENT_OUTSIDERS = new Set([
+  // 检索/读（指向 rg、read、grep 工具）
+  "grep", "egrep", "fgrep", "cat", "tac", "sed", "awk", "gawk", "less", "more", "vi", "vim", "nano",
+  // 包/系统查询（指向 dbq、read、写进缺）
+  "dpkg", "apt", "apt-get", "npm", "npx", "pnpm", "yarn", "pip", "pip3", "uv", "sqlite3", "systemctl",
+  // shell 内建探路（指向 which）
+  "command", "type", "echo", "printf", "env", "printenv", "sleep", "source", "tee",
+  // 网络与写操作（指向"施工类由主代理做"）
+  "curl", "wget", "rm", "mv", "cp", "mkdir", "touch", "chmod", "chown", "kill", "pkill", "dd", "sudo",
+])
 function assistantShellHardNo(cmd) {
   const c = String(cmd ?? "")
-  if (!c.trim()) return ""
+  if (!c.trim()) return null
   for (const s of SUBAGENT_DENY_SUBSTRS) {
-    if (c.includes(s)) return "重定向或禁用旗标（`" + s.trim() + "`）"
+    if (c.includes(s)) return { why: "重定向或禁用旗标（`" + s.trim() + "`）", out: false }
   }
-  for (const seg of c.split(/[;&|]+/)) {
-    const argv0 = seg.trim().replace(/^command\s+/, "").replace(/^rtk\s+/, "").split(/\s+/)[0]
-    if (argv0 && INTERPRETERS.has(argv0.toLowerCase())) return "解释器命令（" + argv0 + "）"
+  for (const seg of c.replace(/^command\s+(?!-)/, "").split(/[;&|]+/)) {
+    const argv0 = seg.trim().replace(/^rtk\s+/, "").split(/\s+/)[0]
+    if (!argv0) continue
+    const a = argv0.toLowerCase()
+    if (INTERPRETERS.has(a)) return { why: "解释器命令（" + argv0 + "）", out: false }
+    if (a === "git") {
+      if (!/^git\s+(status|log)(\s|$)/.test(seg.trim())) return { why: "git " + (seg.trim().split(/\s+/)[1] || ""), out: true }
+      continue
+    }
+    if (SUBAGENT_OUTSIDERS.has(a)) return { why: argv0, out: true }
   }
-  return ""
+  return null
 }
 
 // ---------------------------------------------------------------- tool hook
@@ -474,10 +494,10 @@ async function onTool(event) {
     // 其余放行（仍由原生权限白名单兜底）。general 等其它子代理一律放行。
     if (agent === "assistant") {
       if (tool === "shell" || tool === "bash") {
-        const why = assistantShellHardNo(String(event?.input?.command ?? ""))
-        if (why) {
-          logEvent("reject", { sessionID: sid, agent, tool, reason: "subagent-shell", message: why })
-          throw guardError(MSG.subagentShell(why))
+        const hit = assistantShellHardNo(String(event?.input?.command ?? ""))
+        if (hit) {
+          logEvent("reject", { sessionID: sid, agent, tool, reason: "subagent-shell", message: hit.why })
+          throw guardError(hit.out ? MSG.subagentShellOut(hit.why) : MSG.subagentShell(hit.why))
         }
       }
       return
