@@ -1975,6 +1975,7 @@ ${GUEST_UI_LOOK_CSS}`;
   };
   var built = false;
   var sessionId = null;
+  var sessionTitle = null;
   var config = clone(DEFAULT_CONFIG);
   var draft = null;
   var dirty = false;
@@ -2023,6 +2024,7 @@ ${GUEST_UI_LOOK_CSS}`;
   }
   var statsEl;
   var saveStateEl;
+  var exemptNoteEl = null;
   var bannerWrap;
   var bannerHandle = null;
   var bannerText = "";
@@ -2151,6 +2153,8 @@ ${GUEST_UI_LOOK_CSS}`;
     });
     exemptRow.append(el2("span", "save-state", "\u672C\u4F1A\u8BDD\u5168\u90E8\u76F4\u67E5\u4E0D\u8BA1\u6570\uFF08\u63D2\u4EF6\u4FA7\u5373\u523B\u751F\u6548\uFF09"));
     wrap.append(exemptRow);
+    exemptNoteEl = el2("div", "muted", "");
+    wrap.append(exemptNoteEl);
   }
   function renderStats(stats) {
     if (!statsEl) return;
@@ -2201,12 +2205,21 @@ ${GUEST_UI_LOOK_CSS}`;
       exemptionRoundCap: cfg.exemptionRoundCap
     };
   }
+  function sessionLabel() {
+    if (!sessionId) return "\u672A\u7ED1\u5B9A\u4F1A\u8BDD";
+    const tail = sessionId.length > 10 ? `\u2026${sessionId.slice(-8)}` : sessionId;
+    const title = (sessionTitle ?? "").trim();
+    return title ? `${title}\uFF08${tail}\uFF09` : tail;
+  }
   function renderExempt(on) {
     exemptBtn?.update({
       label: on ? "\u6574\u573A\u653E\u884C\uFF1A\u5F00" : "\u6574\u573A\u653E\u884C\uFF1A\u5173",
       variant: on ? "outline" : "secondary",
       disabled: !sessionId
     });
+    if (exemptNoteEl) {
+      exemptNoteEl.textContent = sessionId ? `\u7ED1\u5B9A\u4F1A\u8BDD\uFF1A${sessionLabel()}` : "\u7ED1\u5B9A\u4F1A\u8BDD\uFF1A\uFF08\u9762\u677F\u5C1A\u672A\u62FF\u5230\u5F53\u524D\u4F1A\u8BDD id\uFF09";
+    }
   }
   function errText(err) {
     if (err instanceof HostRequestError) return err.code;
@@ -2316,23 +2329,23 @@ ${GUEST_UI_LOOK_CSS}`;
       exemptBtn?.update({ loading: false });
     }
   }
-  function attachSession(id) {
-    if (id === sessionId) return;
+  function attachSession(id, title) {
+    const changed = id !== sessionId;
     sessionId = id;
-    if (built) {
-      renderExempt(config.exemptSessions[id ?? ""] === true);
-      void poll();
-    }
+    sessionTitle = title ?? null;
+    if (!built) return;
+    renderExempt(config.exemptSessions[id ?? ""] === true);
+    if (changed) void poll();
   }
   host.onReady((ctx) => {
     applyHostReady(ctx, document.documentElement);
     buildDom();
-    attachSession(ctx.session?.id ?? null);
+    attachSession(ctx.session?.id ?? null, ctx.session?.title ?? null);
     void poll();
   });
   host.onSession((snapshot) => {
     if (!built) return;
-    attachSession(snapshot?.id ?? null);
+    attachSession(snapshot?.id ?? null, snapshot?.title ?? null);
   });
   setInterval(() => {
     void poll();

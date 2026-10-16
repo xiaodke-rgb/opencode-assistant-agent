@@ -2,7 +2,7 @@
 
 assistant 三件套的 OpenChamber 扩展：**设置面板 + 守卫统计**（无后台服务）。
 
-- **设置**：总开关 / 豁免词 / 每轮直查额度（次）/ 会话总额（读·网·命令）/ 豁免轮次上限，外加本会话「整场放行」按钮
+- **设置**：总开关 / 豁免词 / 每轮直查额度（次）/ 会话总额（读·网·命令）/ 豁免轮次上限，外加本会话「整场放行」按钮（按钮下方显示**当前绑定会话**：标题 + id 尾号——面板跟随宿主当前打开的那个会话）
   → 面板直接用宿主的 filesystem 能力读写 `~/.config/opencode/assistant.json`（宿主原子写，无服务、无轮询进程）
 - **统计**：拦截 / 派单 / 豁免 + 最近一条拦截（读插件写的 `~/.config/opencode/assistant-counts.json`，5s 刷新）
 
@@ -42,4 +42,4 @@ OPENCHAMBER_SDK_NODE_MODULES=/path/to/node_modules node build.mjs
 
 - 统计 5s 轮询（面板折叠后仍挂载，照跑）；数据文件很小，开销可忽略
 - 配置文件只有面板这一个写者（插件只读），无双写者冲突
-- 「整场放行」按会话 id 记录，写在同一份 `assistant.json` 的 `exemptSessions` 里
+- 「整场放行」按会话 id 记录，写在同一份 `assistant.json` 的 `exemptSessions` 里；面板绑定宿主当前打开的会话（切会话 / fork 后绑定跟着变，按钮下方有显示）

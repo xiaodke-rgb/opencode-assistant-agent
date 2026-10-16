@@ -70,6 +70,7 @@ const REASON_LABEL: Record<string, string> = {
 
 let built = false;
 let sessionId: string | null = null;
+let sessionTitle: string | null = null;
 let config: Config = clone(DEFAULT_CONFIG);
 /** 设置区可编辑的字段（exemptSessions 不在草稿里，避免与「整场放行」互相覆盖）。 */
 let draft: {
@@ -142,6 +143,7 @@ function normalizeConfig(raw: unknown): Config {
 
 let statsEl!: HTMLElement;
 let saveStateEl!: HTMLElement;
+let exemptNoteEl: HTMLElement | null = null;
 let bannerWrap!: HTMLElement;
 let bannerHandle: BannerHandle | null = null;
 let bannerText = '';
@@ -285,6 +287,10 @@ function buildSettings(wrap: HTMLElement): void {
   });
   exemptRow.append(el('span', 'save-state', '本会话全部直查不计数（插件侧即刻生效）'));
   wrap.append(exemptRow);
+
+  // 「整场放行」作用于哪个会话——面板跟随宿主当前打开的会话，foo/bar 容易混，显式标出来。
+  exemptNoteEl = el('div', 'muted', '');
+  wrap.append(exemptNoteEl);
 }
 
 // ---------------------------------------------------------------------------
@@ -343,12 +349,24 @@ function draftFrom(cfg: Config): NonNullable<typeof draft> {
   };
 }
 
+function sessionLabel(): string {
+  if (!sessionId) return '未绑定会话';
+  const tail = sessionId.length > 10 ? `…${sessionId.slice(-8)}` : sessionId;
+  const title = (sessionTitle ?? '').trim();
+  return title ? `${title}（${tail}）` : tail;
+}
+
 function renderExempt(on: boolean): void {
   exemptBtn?.update({
     label: on ? '整场放行：开' : '整场放行：关',
     variant: on ? 'outline' : 'secondary',
     disabled: !sessionId,
   });
+  if (exemptNoteEl) {
+    exemptNoteEl.textContent = sessionId
+      ? `绑定会话：${sessionLabel()}`
+      : '绑定会话：（面板尚未拿到当前会话 id）';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -477,25 +495,25 @@ async function toggleExempt(): Promise<void> {
 // 启动
 // ---------------------------------------------------------------------------
 
-function attachSession(id: string | null): void {
-  if (id === sessionId) return;
+function attachSession(id: string | null, title: string | null): void {
+  const changed = id !== sessionId;
   sessionId = id;
-  if (built) {
-    renderExempt(config.exemptSessions[id ?? ''] === true);
-    void poll();
-  }
+  sessionTitle = title ?? null;
+  if (!built) return;
+  renderExempt(config.exemptSessions[id ?? ''] === true);
+  if (changed) void poll();
 }
 
 host.onReady((ctx) => {
   applyHostReady(ctx, document.documentElement);
   buildDom();
-  attachSession(ctx.session?.id ?? null);
+  attachSession(ctx.session?.id ?? null, ctx.session?.title ?? null);
   void poll();
 });
 
 host.onSession((snapshot) => {
   if (!built) return;
-  attachSession(snapshot?.id ?? null);
+  attachSession(snapshot?.id ?? null, snapshot?.title ?? null);
 });
 
 setInterval(() => {
