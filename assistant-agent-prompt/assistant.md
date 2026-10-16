@@ -83,6 +83,21 @@ permissions:
   - action: shell
     resource: "*--pre*"
     effect: deny
+  - action: shell
+    resource: "*>>*"
+    effect: deny
+  - action: shell
+    resource: "*1>*"
+    effect: deny
+  - action: shell
+    resource: "*xxd -r*"
+    effect: deny
+  - action: shell
+    resource: "*--output*"
+    effect: deny
+  - action: shell
+    resource: "*ss -K*"
+    effect: deny
   - action: edit
     resource: "*"
     effect: deny
