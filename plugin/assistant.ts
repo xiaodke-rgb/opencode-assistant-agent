@@ -8,8 +8,12 @@
 // Files:
 //   ~/.config/opencode/assistant.json          — shared config (extension writes; plugin reads)
 //   ~/.config/opencode/assistant-events.jsonl  — audit events (boot/reject/dispatch/exempt/warn)
-//   ~/.config/opencode/assistant-counts.json   — guard counters snapshot (panel polls)
+//   ~/.config/opencode/assistant-counts.json   — per-session counters, v2 (panel polls)
 //   ctx.storage key: assistant:session:<id>    — durable per-session counters
+//
+// Counts flush is merge-based: re-read the file, take the max of every counter and the
+// newest lastReject — so a second plugin instance can never overwrite newer values with
+// its stale in-memory snapshot.
 
 const HOME = process.env.HOME || "."
 const CONFIG_PATH = HOME + "/.config/opencode/assistant.json"
@@ -67,8 +71,7 @@ let cfgAt = 0
 const S = {
   sessions: new Map(), // sid -> record
   approvedShell: new Set(), // commands already classified & passed (for shell.create.before)
-  counted: { v: 1, updatedAt: 0, rejected: 0, dispatched: 0, exempted: 0, lastReject: null },
-  countsAt: 0,
+  dirtyCounts: new Set(), // sids with counter changes waiting to be merged into the counts file
   cfgWarned: 0,
 }
 
@@ -90,6 +93,9 @@ function rec(sid) {
       exemptAll: false,
       main: false,
       rejects: {},
+      rejected: 0, // mirrored into the counts file (per session)
+      dispatched: 0, // subagent sessions started from this session (session.created)
+      lastReject: null, // { tool, reason, at }
       loaded: false,
       loading: null,
       storageOK: true,
@@ -110,6 +116,9 @@ async function ensureLoaded(r) {
           if (Number.isFinite(data.counts[k])) r.counts[k] = Math.max(r.counts[k], data.counts[k])
         }
         if (Number.isFinite(data.exemptRounds)) r.exemptRounds = Math.max(r.exemptRounds, data.exemptRounds)
+        if (Number.isFinite(data.rejected)) r.rejected = Math.max(r.rejected, data.rejected)
+        if (Number.isFinite(data.dispatched)) r.dispatched = Math.max(r.dispatched, data.dispatched)
+        r.lastReject = pickNewest(data.lastReject, r.lastReject)
         if (data.main) r.main = true
       }
       r.storageOK = true
@@ -134,11 +143,24 @@ function persist(r) {
   const t = setTimeout(async () => {
     persistTimers.delete(r.sid)
     try {
+      // 读-合并-写：插件可能同时存在多份实例、各持一份计数，直接整份覆盖
+      // 会让较低的一份盖掉较高的（计数冻结/回退的另一个入口）。
+      let prev = null
+      try {
+        prev = await ctxRef.storage.get("assistant:session:" + r.sid)
+      } catch {}
+      const p = prev && typeof prev === "object" ? prev : {}
+      const counts = { read: 0, web: 0, command: 0 }
+      const pc = p.counts && typeof p.counts === "object" ? p.counts : {}
+      for (const k of ["read", "web", "command"]) counts[k] = Math.max(numOr(pc[k], 0), numOr(r.counts[k], 0))
       await ctxRef.storage.set("assistant:session:" + r.sid, {
-        v: 1,
-        counts: { ...r.counts },
-        exemptRounds: r.exemptRounds,
-        main: r.main,
+        v: 2,
+        counts,
+        exemptRounds: Math.max(numOr(p.exemptRounds, 0), numOr(r.exemptRounds, 0)),
+        rejected: Math.max(numOr(p.rejected, 0), numOr(r.rejected, 0)),
+        dispatched: Math.max(numOr(p.dispatched, 0), numOr(r.dispatched, 0)),
+        lastReject: pickNewest(p.lastReject, r.lastReject),
+        main: !!(p.main || r.main),
         updatedAt: Date.now(),
       })
       r.storageOK = true
@@ -159,25 +181,106 @@ function logEvent(kind, fields) {
   } catch {}
 }
 
-function bumpCounts(field, extra) {
-  S.counted[field] = (S.counted[field] || 0) + 1
-  if (extra) S.counted.lastReject = extra
+function numOr(v, d) {
+  return typeof v === "number" && Number.isFinite(v) ? v : d
+}
+
+/** 取更新的一条拦截记录（任一侧可能为 null）。 */
+function pickNewest(a, b) {
+  const x = a && typeof a === "object" ? a : null
+  const y = b && typeof b === "object" ? b : null
+  if (!x) return y
+  if (!y) return x
+  return numOr(y.at, 0) >= numOr(x.at, 0) ? y : x
+}
+
+// 计数落盘：多个插件实例各持一份快照整份写回，会互相把新值盖成旧值（面板看到
+// "数字冻结/回退"）。现在每次落盘前重读文件，按会话做单调合并——计数取 max、
+// 派单按子会话 id 并集、最近拦截取更新的一条——旧快照再也盖不掉新值。
+function touchSession(r) {
+  if (!r) return
+  S.dirtyCounts.add(r.sid)
   scheduleCounts()
 }
 
+const SESSION_KEEP = 60
+
+function mergeSession(fileRec, mine) {
+  const a = fileRec && typeof fileRec === "object" ? fileRec : {}
+  const used = { read: 0, web: 0, command: 0 }
+  const fu = a.used && typeof a.used === "object" ? a.used : {}
+  for (const k of ["read", "web", "command"]) used[k] = Math.max(numOr(fu[k], 0), numOr(mine.used[k], 0))
+
+  const lrFile = a.lastReject && typeof a.lastReject === "object" ? a.lastReject : null
+  const lrMine = mine.lastReject
+  const lr = lrMine && (!lrFile || numOr(lrMine.at, 0) >= numOr(lrFile.at, 0)) ? lrMine : lrFile
+
+  return {
+    rejected: Math.max(numOr(a.rejected, 0), mine.rejected),
+    dispatched: Math.max(numOr(a.dispatched, 0), mine.dispatched),
+    exempted: Math.max(numOr(a.exempted, 0), mine.exempted),
+    used,
+    lastReject: lr ? { tool: lr.tool, reason: lr.reason, at: numOr(lr.at, 0) } : null,
+    updatedAt: Date.now(),
+  }
+}
+
 let countsTimer = null
-function scheduleCounts() {
+let flushing = false
+function scheduleCounts(delay) {
   if (countsTimer) return
-  countsTimer = setTimeout(async () => {
+  countsTimer = setTimeout(() => {
     countsTimer = null
-    try {
-      S.counted.updatedAt = Date.now()
-      const tmp = COUNTS_PATH + ".tmp"
-      await fsP.writeFile(tmp, JSON.stringify(S.counted, null, 2))
-      await fsP.rename(tmp, COUNTS_PATH)
-    } catch {}
-  }, 300)
+    void flushCounts()
+  }, delay ?? 300)
   if (countsTimer.unref) countsTimer.unref()
+}
+
+async function flushCounts() {
+  if (flushing) {
+    scheduleCounts(1000)
+    return
+  }
+  const sids = [...S.dirtyCounts]
+  if (!sids.length) return
+  flushing = true
+  let wrote = false
+  try {
+    await loadDeps()
+    let sessions = {}
+    try {
+      const raw = await fsP.readFile(COUNTS_PATH, "utf8")
+      const j = JSON.parse(raw)
+      if (j && typeof j === "object" && j.v === 2 && j.sessions && typeof j.sessions === "object") sessions = j.sessions
+      // 旧版(v1 全局)/损坏/缺失 → 从空开始（历史仍在 assistant-events.jsonl）
+    } catch {}
+    for (const sid of sids) {
+      const r = S.sessions.get(sid)
+      if (!r) continue
+      sessions[sid] = mergeSession(sessions[sid], {
+        rejected: numOr(r.rejected, 0),
+        dispatched: numOr(r.dispatched, 0),
+        exempted: numOr(r.exemptRounds, 0),
+        used: r.counts,
+        lastReject: r.lastReject,
+      })
+    }
+    const entries = Object.entries(sessions)
+    if (entries.length > SESSION_KEEP) {
+      entries.sort((x, y) => numOr(y[1]?.updatedAt, 0) - numOr(x[1]?.updatedAt, 0))
+      sessions = Object.fromEntries(entries.slice(0, SESSION_KEEP))
+    }
+    const tmp = COUNTS_PATH + "." + process.pid + ".tmp"
+    await fsP.writeFile(tmp, JSON.stringify({ v: 2, updatedAt: Date.now(), sessions }, null, 2))
+    await fsP.rename(tmp, COUNTS_PATH)
+    wrote = true
+  } catch (err) {
+    console.warn("[assistant] counts flush failed:", err?.message ?? err)
+  } finally {
+    flushing = false
+    if (wrote) for (const sid of sids) S.dirtyCounts.delete(sid)
+    if (S.dirtyCounts.size) scheduleCounts(wrote ? 300 : 2000)
+  }
 }
 
 async function refreshConfig(force) {
@@ -374,6 +477,7 @@ async function onTool(event) {
         // 先自增占坑、再判超限（同步占坑、异步落盘）
         rec0.poolUsed += 1
         rec0.counts[dec.cat] += 1
+        touchSession(rec0) // 用量镜像给面板（本会话余额）
         const overPool = rec0.poolUsed > cfg.poolPerRound
         const overTotal = rec0.counts[dec.cat] > cfg.sessionTotals[dec.cat]
         if (rec0.poolPaused) {
@@ -415,8 +519,11 @@ async function onTool(event) {
 }
 
 function rejectLog(r, tool, agent, kind, message) {
-  bumpCounts("rejected", { tool, reason: kind, at: Date.now(), sessionID: r.sid })
-  logEvent("reject", { sessionID: r.sid, agent, tool, kind, message })
+  r.rejected = numOr(r.rejected, 0) + 1
+  r.lastReject = { tool, reason: kind, at: Date.now() }
+  touchSession(r)
+  // 字段名不能叫 kind，否则会覆盖 logEvent 的事件类型
+  logEvent("reject", { sessionID: r.sid, agent, tool, reason: kind, message })
 }
 
 function guardError(msg) {
@@ -463,7 +570,7 @@ async function onPrompt(event) {
       if (r.exemptRounds < cfg.exemptionRoundCap) {
         r.exemptRounds += 1
         r.roundExempt = true
-        bumpCounts("exempted")
+        touchSession(r)
         logEvent("exempt", { sessionID: sid, round: r.round, rounds: r.exemptRounds })
       } else {
         logEvent("warn", { sessionID: sid, note: "exemption round cap reached", cap: cfg.exemptionRoundCap })
@@ -534,9 +641,14 @@ function onEvent(ev) {
   const info = data.info ?? data
 
   if (type === "session.created") {
-    const parentID = info?.parentID
+    const parentID = String(info?.parentID ?? "")
     if (parentID) {
-      bumpCounts("dispatched")
+      // 子会话创建事件只带 parentID、不带 id：按「每个父会话 +1」记；
+      // 多个插件实例各记一次，落盘取 max，所以不会重复计数。
+      const pr = rec(parentID)
+      pr.dispatched = numOr(pr.dispatched, 0) + 1
+      touchSession(pr)
+      persist(pr) // 事件驱动的计数也要落到 storage，插件重载后才不会从头数
       logEvent("dispatch", { sessionID: parentID, childID: info?.id })
     }
     return
@@ -545,6 +657,7 @@ function onEvent(ev) {
     const id = info?.id ?? data?.sessionID
     if (id) {
       S.sessions.delete(id)
+      S.dirtyCounts.delete(id)
       try { ctxRef.storage.remove("assistant:session:" + id).catch(() => {}) } catch {}
       logEvent("debug", { note: "session removed, storage cleaned", sessionID: id })
     }
@@ -564,11 +677,6 @@ export default {
     try {
       await loadDeps()
       await refreshConfig(true)
-      try {
-        const raw = await fsP.readFile(COUNTS_PATH, "utf8")
-        const j = JSON.parse(raw)
-        if (j && typeof j === "object") S.counted = { ...S.counted, ...j, lastReject: j.lastReject ?? null }
-      } catch {}
       logEvent("boot", { pid: process.pid, location: ctx?.location?.directory ?? "" })
       console.log("[assistant] guard loaded at", ctx?.location?.directory ?? "")
     } catch (err) {

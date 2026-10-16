@@ -6,7 +6,7 @@ OpenCode「assistant 子代理」三件套：让主代理把查证类工作稳�
 | --- | --- | --- |
 | `plugin/` | OpenCode 插件（守卫）：分类拦截 + 额度 + 豁免 + 计数 | ✅ v0.1（已实测） |
 | `SKILL/` | OpenCode skill：「assistant 派单工作流」 | ✅ 已落地（2026-10-16） |
-| `openchamber-extension/` | OpenChamber 扩展：设置面板 + 守卫统计 | ✅ v0.2.1（2026-10-16；联动暂缓，等上游） |
+| `openchamber-extension/` | OpenChamber 扩展：设置面板 + 本会话守卫统计 | ✅ v0.2.2（2026-10-16；统计按会话 + 余额行；联动暂缓，等上游） |
 
 ## plugin/assistant.ts
 
@@ -23,9 +23,9 @@ OpenCode「assistant 子代理」三件套：让主代理把查证类工作稳�
 计数与豁免：
 
 - 会话总额：读 30 / 网 10 / 命令 12；豁免词 `#nocap`（整轮豁免，上限 5 轮）
-- 计数落在 OpenCode plugin storage（按 sessionID，write-through，先自增占坑）
+- 计数落在 OpenCode plugin storage（按 sessionID，write-through，先自增占坑）；storage 与面板快照都按会话分片、落盘"先重读再取 max"（多实例并发写不互相覆盖）
 - 审计事件：`~/.config/opencode/assistant-events.jsonl`
-- 面板快照：`~/.config/opencode/assistant-counts.json`
+- 面板快照：`~/.config/opencode/assistant-counts.json`（v2：按会话分片，面板只显示绑定会话那一行 + 余额行）
 - 配置：`~/.config/opencode/assistant.json`（示例见 `plugin/assistant.json.example`）
 
 安装：
@@ -38,14 +38,13 @@ cp -r SKILL/assistant ~/.config/opencode/skills/                     # skill，i
 
 ## openchamber-extension/
 
-OpenChamber 扩展「assistant 守卫」（panel + service）：
+OpenChamber 扩展「assistant 守卫」（**纯面板，无后台服务**）：
 
-- **panel**：守卫统计一行（拦截 / 派单 / 豁免 + 最近一次拦截）、本会话子代理列表（点按跳转）、设置（总开关 / 联动开关 / 豁免词 / 每轮池 / 会话总额 / 豁免轮次上限 + 整场放行按钮）
-- **service**：读 OpenCode 库（`session_v2` 按 `parent_id`）秒级发现本会话新建子会话 → panel 自动 `openSession` 跳转（只跳第一个新鲜子会话；节流 20s；联动开关可关；`NO_SESSION` 静默跳过）
-- **statusSection**：「一键跳最新子代理」兜底入口
-- 已实测（2026-10-16）：子代理创建后约 0.4s 自动弹出并成功跳转（`auto.open` → `open.ok` → `session.changed`）
+- **面板**：两行小字——`本会话：拦截 / 派单 / 豁免 + 最近一条拦截`、`余额：读 · 网 · 命令 · 豁免（剩余/上限）`；设置（总开关 / 豁免词 / 每轮池 / 会话总额 / 豁免轮次上限 + 本会话「整场放行」，按钮下方显示当前绑定会话）
+- 统计读 `~/.config/opencode/assistant-counts.json`（v2 按会话分片，5s 轮询）；设置直读直写 `assistant.json`（宿主 filesystem 能力）
+- **联动暂缓**（2026-10-16）：原生已有「子代理会话开在侧栏 chat 标签」的实现，但没有外部触发通道——等上游控制事件（详见 `openchamber-extension/README.md`）
 
-安装：OpenChamber → 设置 → 扩展 →「添加」，粘贴本仓库 `openchamber-extension` 目录的本地路径，批准 `sessions` + `service` 两项能力。
+安装：OpenChamber → 设置 → 扩展 →「添加」，粘贴本仓库 `openchamber-extension` 目录的本地路径，批准 `sessions` + `filesystem` 两项能力。
 
 构建（产物已随仓库提交，重建才需要）：`node build.mjs`，依赖 esbuild（见目录内 README）。
 

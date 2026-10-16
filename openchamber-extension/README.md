@@ -4,7 +4,10 @@ assistant 三件套的 OpenChamber 扩展：**设置面板 + 守卫统计**（�
 
 - **设置**：总开关 / 豁免词 / 每轮直查额度（次）/ 会话总额（读·网·命令）/ 豁免轮次上限，外加本会话「整场放行」按钮（按钮下方显示**当前绑定会话**：标题 + id 尾号——面板跟随宿主当前打开的那个会话）
   → 面板直接用宿主的 filesystem 能力读写 `~/.config/opencode/assistant.json`（宿主原子写，无服务、无轮询进程）
-- **统计**：拦截 / 派单 / 豁免 + 最近一条拦截（读插件写的 `~/.config/opencode/assistant-counts.json`，5s 刷新）
+- **统计**：两行小字，只算**面板绑定的这个会话**（插件按会话分片记账，fork / 新对话从零起）
+  - `本会话：拦截 / 派单 / 豁免 + 最近一条拦截`
+  - `余额：读 x/30 · 网 x/10 · 命令 x/12 · 豁免 x/5`（剩余/上限，上限取设置里的值）
+  - 数据来自插件写的 `~/.config/opencode/assistant-counts.json`（v2 按会话分片；5s 刷新）
 
 > **联动暂缓（2026-10-16）**：OpenChamber 2.3.3 内部**已有**「子代理会话开在侧栏 chat 标签」的原生实现
 > （`openContextPanelTab(dir, { mode: "chat", dedupeKey: "session:<id>", readOnly: true })`，入口是聊天里的子任务卡片和
@@ -13,7 +16,7 @@ assistant 三件套的 OpenChamber 扩展：**设置面板 + 守卫统计**（�
 
 ## 结构
 
-- `panel/`：侧栏面板（统计一行 + 设置表单 + 整场放行）
+- `panel/`：侧栏面板（本会话统计 + 余额两行 + 设置表单 + 整场放行）
 - `package.json`：manifest 在 `openchamber` 块里（panel id `assistant`，能力 `sessions` + `filesystem`）
 - `build.mjs`：esbuild 打包 `panel/main.ts` → `panel/main.js`
 - `icon.svg` / `LICENSE` / `tsconfig.json`
@@ -43,3 +46,4 @@ OPENCHAMBER_SDK_NODE_MODULES=/path/to/node_modules node build.mjs
 - 统计 5s 轮询（面板折叠后仍挂载，照跑）；数据文件很小，开销可忽略
 - 配置文件只有面板这一个写者（插件只读），无双写者冲突
 - 「整场放行」按会话 id 记录，写在同一份 `assistant.json` 的 `exemptSessions` 里；面板绑定宿主当前打开的会话（切会话 / fork 后绑定跟着变，按钮下方有显示）
+- 统计**按会话分片**存在 `assistant-counts.json`（v2，保留最近 60 个会话）；插件落盘"先重读再取 max"，多个插件实例并发写也不会把数字盖小

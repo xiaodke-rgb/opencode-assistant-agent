@@ -1,8 +1,9 @@
 /**
  * assistant 面板（纯设置 + 统计）
  *
- * - 头顶：守卫统计一行（拦截 / 派单 / 豁免 + 最近一条拦截），数据来自插件写的
- *   `~/.config/opencode/assistant-counts.json`
+ * - 头顶：本会话守卫统计一行（拦截 / 派单 / 豁免 + 最近一条拦截）+ 本会话余额一行
+ *   （读/网/命令剩余 · 豁免剩余），数据来自插件写的
+ *   `~/.config/opencode/assistant-counts.json`（v2：按会话分片）
  * - 设置：总开关 / 豁免词 / 每轮直查额度 / 会话总额（读·网·命令）/ 豁免轮次上限
  *   + 本会话「整场放行」——全部直接读写 `~/.config/opencode/assistant.json`
  * - 无后台服务、无联动、无子代理列表：面板只用宿主的文件能力（filesystem）
@@ -38,12 +39,18 @@ type Config = {
   exemptionRoundCap: number;
   exemptSessions: Record<string, boolean>;
 };
-type Stats = {
+type SessionStats = {
   rejected: number;
   dispatched: number;
   exempted: number;
+  used: Totals;
   updatedAt: number;
-  lastReject: { tool?: string; reason?: string; at?: number; sessionID?: string } | null;
+  lastReject: { tool?: string; reason?: string; at?: number } | null;
+};
+type CountsFile = {
+  v?: number;
+  updatedAt?: number;
+  sessions?: Record<string, unknown>;
 };
 
 /** 与插件的默认值一致；配置文件缺失/字段缺失时兜底。 */
@@ -142,6 +149,7 @@ function normalizeConfig(raw: unknown): Config {
 // ---------------------------------------------------------------------------
 
 let statsEl!: HTMLElement;
+let balanceEl!: HTMLElement;
 let saveStateEl!: HTMLElement;
 let exemptNoteEl: HTMLElement | null = null;
 let bannerWrap!: HTMLElement;
@@ -180,8 +188,9 @@ function buildDom(): void {
 
   const hd = el('div', 'hd');
   hd.append(el('h1', '', 'assistant 守卫'));
-  statsEl = el('div', 'stats muted', '统计加载中…');
-  hd.append(statsEl);
+  statsEl = el('div', 'stats muted', '本会话：统计加载中…');
+  balanceEl = el('div', 'stats muted', '');
+  hd.append(statsEl, balanceEl);
   root.append(hd);
 
   bannerWrap = el('div');
@@ -297,19 +306,30 @@ function buildSettings(wrap: HTMLElement): void {
 // 渲染
 // ---------------------------------------------------------------------------
 
-function renderStats(stats: Stats | null): void {
+/** 只显示面板绑定的这个会话（插件按会话分片记账），外加本会话余额一行。 */
+function renderStats(sessions: Record<string, SessionStats> | null, cfg: Config): void {
   if (!statsEl) return;
-  if (!stats) {
-    statsEl.textContent = '暂无统计（插件尚未写入 assistant-counts.json）';
-    return;
-  }
-  const lr = stats.lastReject;
-  let text = `拦截 ${stats.rejected} · 派单 ${stats.dispatched} · 豁免 ${stats.exempted}`;
+  const s = sessionId ? sessions?.[sessionId] : undefined;
+  const rejected = s?.rejected ?? 0;
+  const dispatched = s?.dispatched ?? 0;
+  const exempted = s?.exempted ?? 0;
+  const lr = s?.lastReject ?? null;
+
+  let text = sessionId ? `本会话：拦截 ${rejected} · 派单 ${dispatched} · 豁免 ${exempted}` : '本会话：未绑定会话';
   if (lr) {
     const reason = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : '';
     text += ` · 最近 ${lr.tool ?? ''}${reason ? `（${reason}）` : ''} ${fmtTime(lr.at ?? 0)}`;
   }
   statsEl.textContent = text;
+
+  if (!balanceEl) return;
+  const used = s?.used ?? { read: 0, web: 0, command: 0 };
+  const rem = (total: number, u: number): string => `${Math.max(0, total - u)}/${total}`;
+  balanceEl.textContent =
+    `余额：读 ${rem(cfg.sessionTotals.read, used.read)}` +
+    ` · 网 ${rem(cfg.sessionTotals.web, used.web)}` +
+    ` · 命令 ${rem(cfg.sessionTotals.command, used.command)}` +
+    ` · 豁免 ${rem(cfg.exemptionRoundCap, exempted)}`;
 }
 
 function applyConfig(cfg: Config, force: boolean): void {
@@ -392,19 +412,43 @@ async function readConfigFile(): Promise<{ cfg: Config; missing: boolean }> {
   }
 }
 
-async function readCountsFile(): Promise<Stats | null> {
+function normalizeSessionStats(raw: unknown): SessionStats {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const used = (r.used ?? {}) as Record<string, unknown>;
+  const lr = (r.lastReject ?? null) as Record<string, unknown> | null;
+  return {
+    rejected: intOr(r.rejected, 0),
+    dispatched: intOr(r.dispatched, 0),
+    exempted: intOr(r.exempted, 0),
+    used: {
+      read: intOr(used.read, 0),
+      web: intOr(used.web, 0),
+      command: intOr(used.command, 0),
+    },
+    updatedAt: intOr(r.updatedAt, 0),
+    lastReject: lr
+      ? {
+          tool: typeof lr.tool === 'string' ? lr.tool : undefined,
+          reason: typeof lr.reason === 'string' ? lr.reason : undefined,
+          at: intOr(lr.at, 0),
+        }
+      : null,
+  };
+}
+
+/** 读统计文件（v2：按会话分片）。缺失/旧版/损坏都返回空表（显示零）。 */
+async function readCountsFile(): Promise<Record<string, SessionStats>> {
   try {
     const res = await host.readFile(COUNTS_PATH);
-    const raw = JSON.parse(res.content) as Partial<Stats>;
-    return {
-      rejected: intOr(raw.rejected, 0),
-      dispatched: intOr(raw.dispatched, 0),
-      exempted: intOr(raw.exempted, 0),
-      updatedAt: intOr(raw.updatedAt, 0),
-      lastReject: raw.lastReject ?? null,
-    };
+    const raw = JSON.parse(res.content) as CountsFile;
+    const out: Record<string, SessionStats> = {};
+    const sessions = raw?.sessions;
+    if (sessions && typeof sessions === 'object') {
+      for (const [sid, rec] of Object.entries(sessions)) out[sid] = normalizeSessionStats(rec);
+    }
+    return out;
   } catch {
-    return null;
+    return {};
   }
 }
 
@@ -420,14 +464,14 @@ async function poll(): Promise<void> {
   if (!built || polling) return;
   polling = true;
   try {
-    const [cfgRes, stats] = await Promise.all([readConfigFile(), readCountsFile()]);
-    renderStats(stats);
+    const [cfgRes, sessions] = await Promise.all([readConfigFile(), readCountsFile()]);
     if (cfgRes.missing) {
       setBanner('info', '还没有配置文件', `保存一次即可创建 ${CONFIG_PATH}（当前显示默认值）`);
     } else {
       clearBanner();
     }
     applyConfig(cfgRes.cfg, false);
+    renderStats(sessions, config);
   } catch (err) {
     setBanner('warning', '读配置失败', `${errText(err)} · ${CONFIG_PATH}`);
   } finally {

@@ -2023,6 +2023,7 @@ ${GUEST_UI_LOOK_CSS}`;
     };
   }
   var statsEl;
+  var balanceEl;
   var saveStateEl;
   var exemptNoteEl = null;
   var bannerWrap;
@@ -2056,8 +2057,9 @@ ${GUEST_UI_LOOK_CSS}`;
     root.innerHTML = "";
     const hd = el2("div", "hd");
     hd.append(el2("h1", "", "assistant \u5B88\u536B"));
-    statsEl = el2("div", "stats muted", "\u7EDF\u8BA1\u52A0\u8F7D\u4E2D\u2026");
-    hd.append(statsEl);
+    statsEl = el2("div", "stats muted", "\u672C\u4F1A\u8BDD\uFF1A\u7EDF\u8BA1\u52A0\u8F7D\u4E2D\u2026");
+    balanceEl = el2("div", "stats muted", "");
+    hd.append(statsEl, balanceEl);
     root.append(hd);
     bannerWrap = el2("div");
     root.append(bannerWrap);
@@ -2156,19 +2158,23 @@ ${GUEST_UI_LOOK_CSS}`;
     exemptNoteEl = el2("div", "muted", "");
     wrap.append(exemptNoteEl);
   }
-  function renderStats(stats) {
+  function renderStats(sessions, cfg) {
     if (!statsEl) return;
-    if (!stats) {
-      statsEl.textContent = "\u6682\u65E0\u7EDF\u8BA1\uFF08\u63D2\u4EF6\u5C1A\u672A\u5199\u5165 assistant-counts.json\uFF09";
-      return;
-    }
-    const lr = stats.lastReject;
-    let text = `\u62E6\u622A ${stats.rejected} \xB7 \u6D3E\u5355 ${stats.dispatched} \xB7 \u8C41\u514D ${stats.exempted}`;
+    const s = sessionId ? sessions?.[sessionId] : void 0;
+    const rejected = s?.rejected ?? 0;
+    const dispatched = s?.dispatched ?? 0;
+    const exempted = s?.exempted ?? 0;
+    const lr = s?.lastReject ?? null;
+    let text = sessionId ? `\u672C\u4F1A\u8BDD\uFF1A\u62E6\u622A ${rejected} \xB7 \u6D3E\u5355 ${dispatched} \xB7 \u8C41\u514D ${exempted}` : "\u672C\u4F1A\u8BDD\uFF1A\u672A\u7ED1\u5B9A\u4F1A\u8BDD";
     if (lr) {
       const reason = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : "";
       text += ` \xB7 \u6700\u8FD1 ${lr.tool ?? ""}${reason ? `\uFF08${reason}\uFF09` : ""} ${fmtTime(lr.at ?? 0)}`;
     }
     statsEl.textContent = text;
+    if (!balanceEl) return;
+    const used = s?.used ?? { read: 0, web: 0, command: 0 };
+    const rem = (total, u) => `${Math.max(0, total - u)}/${total}`;
+    balanceEl.textContent = `\u4F59\u989D\uFF1A\u8BFB ${rem(cfg.sessionTotals.read, used.read)} \xB7 \u7F51 ${rem(cfg.sessionTotals.web, used.web)} \xB7 \u547D\u4EE4 ${rem(cfg.sessionTotals.command, used.command)} \xB7 \u8C41\u514D ${rem(cfg.exemptionRoundCap, exempted)}`;
   }
   function applyConfig(cfg, force) {
     config = cfg;
@@ -2237,19 +2243,39 @@ ${GUEST_UI_LOOK_CSS}`;
       throw err;
     }
   }
+  function normalizeSessionStats(raw) {
+    const r = raw ?? {};
+    const used = r.used ?? {};
+    const lr = r.lastReject ?? null;
+    return {
+      rejected: intOr(r.rejected, 0),
+      dispatched: intOr(r.dispatched, 0),
+      exempted: intOr(r.exempted, 0),
+      used: {
+        read: intOr(used.read, 0),
+        web: intOr(used.web, 0),
+        command: intOr(used.command, 0)
+      },
+      updatedAt: intOr(r.updatedAt, 0),
+      lastReject: lr ? {
+        tool: typeof lr.tool === "string" ? lr.tool : void 0,
+        reason: typeof lr.reason === "string" ? lr.reason : void 0,
+        at: intOr(lr.at, 0)
+      } : null
+    };
+  }
   async function readCountsFile() {
     try {
       const res = await host.readFile(COUNTS_PATH);
       const raw = JSON.parse(res.content);
-      return {
-        rejected: intOr(raw.rejected, 0),
-        dispatched: intOr(raw.dispatched, 0),
-        exempted: intOr(raw.exempted, 0),
-        updatedAt: intOr(raw.updatedAt, 0),
-        lastReject: raw.lastReject ?? null
-      };
+      const out = {};
+      const sessions = raw?.sessions;
+      if (sessions && typeof sessions === "object") {
+        for (const [sid, rec] of Object.entries(sessions)) out[sid] = normalizeSessionStats(rec);
+      }
+      return out;
     } catch {
-      return null;
+      return {};
     }
   }
   async function writeConfigFile(cfg) {
@@ -2260,14 +2286,14 @@ ${GUEST_UI_LOOK_CSS}`;
     if (!built || polling) return;
     polling = true;
     try {
-      const [cfgRes, stats] = await Promise.all([readConfigFile(), readCountsFile()]);
-      renderStats(stats);
+      const [cfgRes, sessions] = await Promise.all([readConfigFile(), readCountsFile()]);
       if (cfgRes.missing) {
         setBanner("info", "\u8FD8\u6CA1\u6709\u914D\u7F6E\u6587\u4EF6", `\u4FDD\u5B58\u4E00\u6B21\u5373\u53EF\u521B\u5EFA ${CONFIG_PATH}\uFF08\u5F53\u524D\u663E\u793A\u9ED8\u8BA4\u503C\uFF09`);
       } else {
         clearBanner();
       }
       applyConfig(cfgRes.cfg, false);
+      renderStats(sessions, config);
     } catch (err) {
       setBanner("warning", "\u8BFB\u914D\u7F6E\u5931\u8D25", `${errText(err)} \xB7 ${CONFIG_PATH}`);
     } finally {
