@@ -1,0 +1,140 @@
+#!/usr/bin/env node
+// dbq — 只读 SQLite 查询助手（给 assistant 子代理等只读查证用）
+//
+// 用法：
+//   dbq [--db <路径>] [--limit N] [--pretty] [--tables] '<SQL>'
+//
+// 特性：
+//   - 只读连接（readOnly + PRAGMA query_only），写操作在连接层就被拒
+//   - 只接受单条只读查询（SELECT / WITH / PRAGMA / EXPLAIN），多条也只会执行第一条
+//   - 输出紧凑 JSON 数组（--pretty 换行缩进）；默认最多 200 行（--limit 调整）
+//   - 自动读 WAL，取到的就是最新数据
+//
+// 例子：
+//   dbq --tables
+//   dbq "PRAGMA table_info(session_message)"
+//   dbq "SELECT COUNT(*) c FROM session_message WHERE type='assistant'"
+//   dbq --limit 20 "SELECT json_extract(data,'$.model.id') m, COUNT(*) c FROM session_message GROUP BY 1 ORDER BY 2 DESC"
+
+// 静音 node 的实验性警告（node:sqlite）
+process.emitWarning = () => {};
+
+const os = require("node:os");
+const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
+
+const DEFAULT_LIMIT = 200;
+const DEFAULT_DB =
+  process.env.OPENCODE_DB ||
+  path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
+
+const HELP = `dbq — 只读 SQLite 查询助手
+
+用法: dbq [--db <路径>] [--limit N] [--pretty] [--tables] '<SQL>'
+
+  --db <路径>   目标库（默认 ${DEFAULT_DB}，可用 OPENCODE_DB 覆盖）
+  --limit N     最多输出多少行（默认 ${DEFAULT_LIMIT}）
+  --pretty      缩进输出（默认紧凑单行 JSON）
+  --tables      列出所有表/视图（等价 .tables）
+  -h, --help    显示本帮助
+
+只读：写操作会在连接层被拒绝。示例：
+  dbq --tables
+  dbq "PRAGMA table_info(session_message)"
+  dbq "SELECT COUNT(*) c FROM session_message"`;
+
+function die(msg) {
+  process.stderr.write("dbq: " + msg + "\n");
+  process.exit(1);
+}
+
+const argv = process.argv.slice(2);
+let dbPath = DEFAULT_DB;
+let limit = DEFAULT_LIMIT;
+let wantTables = false;
+let pretty = false;
+const rest = [];
+
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === "-h" || a === "--help") {
+    process.stdout.write(HELP + "\n");
+    process.exit(0);
+  } else if (a === "--db") {
+    dbPath = argv[++i];
+    if (!dbPath) die("--db 需要路径");
+  } else if (a.startsWith("--db=")) {
+    dbPath = a.slice("--db=".length);
+  } else if (a === "--limit") {
+    limit = Number(argv[++i]);
+    if (!Number.isFinite(limit) || limit < 1) die("--limit 需要正整数");
+  } else if (a.startsWith("--limit=")) {
+    limit = Number(a.slice("--limit=".length));
+    if (!Number.isFinite(limit) || limit < 1) die("--limit 需要正整数");
+  } else if (a === "--tables") {
+    wantTables = true;
+  } else if (a === "--pretty") {
+    pretty = true;
+  } else if (a.startsWith("-") && a !== "-") {
+    die("未知参数 " + a + "（dbq --help）");
+  } else {
+    rest.push(a);
+  }
+}
+
+let sql = wantTables
+  ? "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY name"
+  : rest.join(" ").trim().replace(/;+\s*$/, "");
+
+if (!sql) die("缺少 SQL（dbq --help）");
+
+const head = sql.replace(/^\s+/, "").slice(0, 16).toUpperCase();
+if (!/^(SELECT|WITH|PRAGMA|EXPLAIN|VALUES)\b/.test(head)) {
+  die("只接受只读查询（SELECT / WITH / PRAGMA / EXPLAIN）");
+}
+
+let db;
+try {
+  db = new DatabaseSync(dbPath, { readOnly: true });
+} catch (e) {
+  die("打不开 " + dbPath + "：" + (e && e.message ? e.message : e));
+}
+try {
+  db.exec("PRAGMA query_only = 1");
+} catch {
+  /* readOnly 连接本来也写不了 */
+}
+
+let rows;
+try {
+  rows = db.prepare(sql).all();
+} catch (e) {
+  die((e && e.message ? e.message : e).replace(/\s+/g, " ").trim());
+} finally {
+  try {
+    db.close();
+  } catch {
+    /* ignore */
+  }
+}
+
+const total = rows.length;
+const truncated = total > limit;
+if (truncated) rows = rows.slice(0, limit);
+
+function replacer(_key, value) {
+  if (typeof value === "bigint") return value.toString();
+  if (value instanceof Uint8Array) return "<blob " + value.length + "B>";
+  return value;
+}
+
+process.stdout.write(
+  (pretty ? JSON.stringify(rows, replacer, 2) : JSON.stringify(rows, replacer)) + "\n"
+);
+process.stderr.write(
+  "dbq: " +
+    (truncated ? "truncated to " + limit + " of " + total : total) +
+    " row(s) · " +
+    dbPath +
+    "\n"
+);

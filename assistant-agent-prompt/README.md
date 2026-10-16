@@ -20,7 +20,7 @@ cp assistant-agent-prompt/assistant.md ~/.config/opencode/agents/assistant.md
 
 ## 依赖
 
-- 提示词里的 `dbq` 是配套的只读 SQLite 助手（`~/.local/bin/dbq`，node 脚本，用 node:sqlite 以 readOnly 打开、只收一条 SELECT）；没有它时只有那条速查项不可用，其余不受影响。
+- 提示词里的 `dbq` 是本目录自带的只读 SQLite 助手（`dbq`，node 脚本，用 `node:sqlite` 以 `readOnly` 打开、只收一条 SELECT；`--tables` 看表、`--limit N` 限量）。安装：`install -m 0755 assistant-agent-prompt/dbq ~/.local/bin/`（需要 node ≥ 22，本机 v24）。没装它时只有那条速查项不可用，其余不受影响。
 - 白名单里的命令需本机存在：`rg` / `jq` / `dust` / `procs` / `ss` / `lsof` / `strings` / `xxd`。多数发行版自带 `ss` / `lsof` / `strings` / `xxd`；`dust`、`procs` 可从 GitHub release 下载预编译二进制放进 `~/.local/bin`。
 
 ## 设计意图

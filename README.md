@@ -36,6 +36,7 @@ cp plugin/assistant.ts ~/.config/opencode/plugins/
 cp plugin/assistant.json.example ~/.config/opencode/assistant.json   # 可选
 cp -r SKILL/assistant ~/.config/opencode/skills/                     # skill，id: assistant
 cp assistant-agent-prompt/assistant.md ~/.config/opencode/agents/assistant.md   # 子代理定义（提示词 + 权限白名单）
+install -m 0755 assistant-agent-prompt/dbq ~/.local/bin/dbq                      # 可选：只读 SQLite 助手（node 脚本）
 ```
 
 ## openchamber-extension/
