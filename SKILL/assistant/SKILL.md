@@ -10,7 +10,7 @@ description: 派 assistant 子代理查证/检索/网页/命令诊断的派单�
 ## 何时派
 
 - **查证、检索、网页搜索 → 派 assistant**（plan 场次一律）。
-- **命令类诊断也派**：assistant 有只读 shell（`ls` / `stat` / `pwd` / `wc` / `file` / `which` / `date` / `git status` / 限长 `git log --oneline`）。
+- **命令类诊断也派**：assistant 有只读 shell 白名单（`ls` / `stat` / `rg` / `jq` / `dbq` / `dust` / `procs` / `head` / `tail` / `ss` / `lsof` / `strings` / `xxd` / `readlink` / `git status` / 限长 `git log --oneline` 等，完整以 `agents/assistant.md` 为准）。
 - **plan 场次可直查的例外**：1–2 个明确路径的小文件、明确 URL 的 `webfetch`、`glob` 找文件——以插件额度为准（每轮直查池 3 次），本 skill 不维护第二套阈值。
 - **build 场次的例外（重要）**：只有网页类（`websearch` / `webfetch`）派 assistant；读文件、找文件、翻日志、跑命令、改代码全部自己干——那是施工本体。
 

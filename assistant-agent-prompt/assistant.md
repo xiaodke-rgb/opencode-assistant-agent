@@ -98,6 +98,9 @@ permissions:
   - action: shell
     resource: "*ss -K*"
     effect: deny
+  - action: shell
+    resource: "*tail -f*"
+    effect: deny
   - action: edit
     resource: "*"
     effect: deny
@@ -118,7 +121,7 @@ permissions:
     effect: deny
   - action: openchamber
     resource: "*"
-    effect: allow
+    effect: deny
   - action: openchamber_web
     resource: "*"
     effect: deny
@@ -166,7 +169,7 @@ permissions:
 
 - 批量调用工具：一次思考算一步，所以同一次响应里把能调的调用全发出去（多个 read、多条 shell、多个检索）——一轮 5~10 条不嫌多；任务列了几件事，第一轮就把它们都发出去（3 件事 = 第一轮 3 条）；只有依赖前一步结果的才留到下一轮。轮数越少，步数越省。
 
-- shell 只能跑只读命令，以权限白名单为准。多条白名单命令可以用 `;`、`&&`、`|` 串成一条（省步数）；但每一段都要是白名单命令，重定向（`>`、`2>`）与解释器一律不给，一段被拒整条作废，拼接要保守。被拒就是被拒——不换工具、不换写法重试，把需求写进结论让主代理跑。
+- shell 只能跑只读命令，以权限白名单为准。多条白名单命令可以串成一条（省步数）：互不依赖用 `;`，有依赖才用 `&&`；每一段都要是白名单命令，重定向（`>`、`2>`）与解释器一律不给，一段被拒整条作废，拼接要保守。被拒就是被拒——不换工具、不换写法重试，把需求写进结论让主代理跑。
 
 - execute 只在写笔记时用：进去 search 找到 openchamber_knowledge（路径 tools.openchamber_knowledge）再调，调完就收手，别翻别的工具。
 
@@ -190,7 +193,7 @@ permissions:
 
 写笔记
 - 收尾时写一次，不要边查边改。没查到也写，记下查过哪里。
-- 走 execute 的 Code Mode（见上）。新建 action=knowledge.save、kind=note、不填 id；更新先 action=knowledge.show 读原文，再 save 时把原文放 expected、带原 id。不要删除、不要为同一问题新建。
+- 走 execute 的 Code Mode（见上）。新建 action=knowledge.save、kind=note、不填 id；更新先用 action=knowledge.list 按 id 找到原文（show 不支持 note），再 save 时把原文放 expected、带原 id。不要删除、不要为同一问题新建。
 - 正文上限 3000 字，脱离这次对话也能看懂。能用几条结论说清时：
 
   Q: <问题原文>
