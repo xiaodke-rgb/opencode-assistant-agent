@@ -1703,11 +1703,6 @@ ${GUEST_UI_LOOK_CSS}`;
 
   // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/dom.js
   var STYLE_ID = "oc-sdk-ui-style";
-  var clearNode = (node) => {
-    while (node.firstChild) {
-      node.removeChild(node.firstChild);
-    }
-  };
   var ensureStyle = (css) => {
     const existing = document.getElementById(STYLE_ID);
     if (existing instanceof HTMLStyleElement) {
@@ -1868,40 +1863,6 @@ ${GUEST_UI_LOOK_CSS}`;
     return node;
   };
 
-  // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/navigation.js
-  var navigationKey = (event, axis = "vertical") => {
-    const [next, previous] = axis === "vertical" ? ["ArrowDown", "ArrowUp"] : ["ArrowRight", "ArrowLeft"];
-    if (event.key === next || event.ctrlKey && event.key.toLowerCase() === "n")
-      return "next";
-    if (event.key === previous || event.ctrlKey && event.key.toLowerCase() === "p")
-      return "previous";
-    if (event.key === "Home")
-      return "first";
-    if (event.key === "End")
-      return "last";
-    return null;
-  };
-  var moveListSelection = (items, currentId, key) => {
-    const enabled = items.filter((item) => !item.disabled);
-    if (enabled.length === 0) {
-      return null;
-    }
-    const first = enabled[0];
-    const last = enabled[enabled.length - 1];
-    if (key === "first" || !first || !last) {
-      return first?.id ?? null;
-    }
-    if (key === "last") {
-      return last.id;
-    }
-    const index = enabled.findIndex((item) => item.id === currentId);
-    if (index === -1) {
-      return key === "next" ? first.id : last.id;
-    }
-    const target = enabled[Math.min(enabled.length - 1, Math.max(0, index + (key === "next" ? 1 : -1)))];
-    return target?.id ?? null;
-  };
-
   // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/checkbox.js
   var mountToggle = (root2, initial, role) => {
     ensureStyle(UI_CSS);
@@ -1944,99 +1905,6 @@ ${GUEST_UI_LOOK_CSS}`;
     };
   };
   var mountSwitch = (root2, initial) => mountToggle(root2, initial, "switch");
-
-  // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/badge.js
-  var applyTone = (node, tone2) => {
-    setAttr(node, "data-tone", tone2 && tone2 !== "neutral" ? tone2 : null);
-  };
-
-  // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/list.js
-  var listCount = 0;
-  var mountList = (root2, initial) => {
-    ensureStyle(UI_CSS);
-    let props = initial;
-    const uid = `oc-sdk-list-${listCount += 1}`;
-    const list = el("div", "oc-sdk oc-sdk-list");
-    list.setAttribute("role", "listbox");
-    list.tabIndex = 0;
-    root2.append(list);
-    let activeId = null;
-    const rowId = (id) => `${uid}-${id}`;
-    const setActive = (id) => {
-      activeId = id;
-      for (const row of Array.from(list.children)) {
-        if (row instanceof HTMLElement) {
-          row.dataset.active = row.id === rowId(id ?? "") ? "true" : "false";
-        }
-      }
-      setAttr(list, "aria-activedescendant", id ? rowId(id) : null);
-      list.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
-    };
-    const span = (className, text) => {
-      const node = el("span", className);
-      node.textContent = text;
-      return node;
-    };
-    const paint = () => {
-      clearNode(list);
-      setAttr(list, "aria-label", props.ariaLabel);
-      if (props.items.length === 0) {
-        list.append(span("oc-sdk-list-empty", props.emptyText ?? "Nothing here"));
-        setActive(null);
-        return;
-      }
-      for (const item of props.items) {
-        const row = button("oc-sdk-row");
-        row.id = rowId(item.id);
-        row.setAttribute("role", "option");
-        row.setAttribute("aria-selected", item.id === props.selectedId ? "true" : "false");
-        row.disabled = Boolean(item.disabled);
-        row.tabIndex = -1;
-        if (item.leading)
-          row.append(span("oc-sdk-row-lead", item.leading));
-        const main = el("span", "oc-sdk-row-main");
-        main.append(span("oc-sdk-row-title", item.title));
-        if (item.subtitle)
-          main.append(span("oc-sdk-row-sub", item.subtitle));
-        row.append(main);
-        if (item.badge) {
-          const badge = span("oc-sdk-badge", item.badge.label);
-          applyTone(badge, item.badge.tone);
-          row.append(badge);
-        }
-        if (item.meta)
-          row.append(span("oc-sdk-row-meta", item.meta));
-        row.addEventListener("click", () => props.onSelect(item.id));
-        list.append(row);
-      }
-      const stillThere = props.items.some((item) => item.id === activeId && !item.disabled);
-      setActive(stillThere ? activeId : props.selectedId ?? null);
-    };
-    const onKeyDown = (event) => {
-      const step = navigationKey(event);
-      if (step) {
-        event.preventDefault();
-        setActive(moveListSelection(props.items, activeId, step));
-        return;
-      }
-      if ((event.key === "Enter" || event.key === " ") && activeId) {
-        event.preventDefault();
-        props.onSelect(activeId);
-      }
-    };
-    list.addEventListener("keydown", onKeyDown);
-    paint();
-    return {
-      update: (next) => {
-        props = { ...props, ...next };
-        paint();
-      },
-      dispose: () => {
-        list.removeEventListener("keydown", onKeyDown);
-        list.remove();
-      }
-    };
-  };
 
   // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/banner.js
   var mountBanner = (root2, initial) => {
@@ -2087,9 +1955,17 @@ ${GUEST_UI_LOOK_CSS}`;
   // panel/main.ts
   var host = connectHost();
   var root = document.querySelector("#root");
-  var POLL_MS = 1500;
-  var AUTO_COOLDOWN_MS = 2e4;
-  var BASE_SLACK_MS = 3e3;
+  var CONFIG_PATH = "~/.config/opencode/assistant.json";
+  var COUNTS_PATH = "~/.config/opencode/assistant-counts.json";
+  var POLL_MS = 5e3;
+  var DEFAULT_CONFIG = {
+    enabled: true,
+    exemptionWord: "#nocap",
+    poolPerRound: 3,
+    sessionTotals: { read: 30, web: 10, command: 12 },
+    exemptionRoundCap: 5,
+    exemptSessions: {}
+  };
   var REASON_LABEL = {
     direct: "\u76F4\u63A5\u62D2",
     build: "\u65BD\u5DE5\u7C7B",
@@ -2099,19 +1975,19 @@ ${GUEST_UI_LOOK_CSS}`;
   };
   var built = false;
   var sessionId = null;
-  var baseAt = 0;
-  var seen = /* @__PURE__ */ new Set();
-  var lastAutoAt = 0;
+  var config = clone(DEFAULT_CONFIG);
   var draft = null;
   var dirty = false;
   var saving = false;
   var polling = false;
-  var current = null;
   function el2(tag, cls, text) {
     const node = document.createElement(tag);
     if (cls) node.className = cls;
     if (text !== void 0) node.textContent = text;
     return node;
+  }
+  function clone(v2) {
+    return JSON.parse(JSON.stringify(v2));
   }
   function fmtTime(ts) {
     if (!ts) return "\u2014";
@@ -2119,16 +1995,46 @@ ${GUEST_UI_LOOK_CSS}`;
     const p = (n) => String(n).padStart(2, "0");
     return `${p(d.getHours())}:${p(d.getMinutes())}`;
   }
-  function agentLabel(agent) {
-    return agent || "\u5B50\u4EE3\u7406";
+  function intOr(v2, fallback) {
+    return typeof v2 === "number" && Number.isFinite(v2) ? Math.trunc(v2) : fallback;
   }
-  function log(event, data) {
-    void host.serviceRequest({ method: "POST", path: "/panellog", body: JSON.stringify({ event, data: data ?? null }) }).catch(() => {
-    });
+  function normalizeConfig(raw) {
+    const d = DEFAULT_CONFIG;
+    if (!raw || typeof raw !== "object") return clone(d);
+    const r = raw;
+    const totals = r.sessionTotals ?? {};
+    const exemptIn = r.exemptSessions ?? {};
+    const exempt = {};
+    for (const [k, v2] of Object.entries(exemptIn)) {
+      if (v2 === true && /^[A-Za-z0-9_-]{1,80}$/.test(k)) exempt[k] = true;
+    }
+    return {
+      enabled: typeof r.enabled === "boolean" ? r.enabled : d.enabled,
+      exemptionWord: typeof r.exemptionWord === "string" && r.exemptionWord.trim() ? r.exemptionWord : d.exemptionWord,
+      poolPerRound: intOr(r.poolPerRound, d.poolPerRound),
+      sessionTotals: {
+        read: intOr(totals.read, d.sessionTotals.read),
+        web: intOr(totals.web, d.sessionTotals.web),
+        command: intOr(totals.command, d.sessionTotals.command)
+      },
+      exemptionRoundCap: intOr(r.exemptionRoundCap, d.exemptionRoundCap),
+      exemptSessions: exempt
+    };
   }
+  var statsEl;
+  var saveStateEl;
   var bannerWrap;
   var bannerHandle = null;
   var bannerText = "";
+  var saveBtn = null;
+  var exemptBtn = null;
+  var swEnabled = null;
+  var tfWord = null;
+  var tfPool = null;
+  var tfRead = null;
+  var tfWeb = null;
+  var tfCmd = null;
+  var tfCap = null;
   function setBanner(tone2, title, body) {
     const key = `${tone2}|${title}|${body}`;
     if (bannerHandle && bannerText === key) return;
@@ -2142,50 +2048,32 @@ ${GUEST_UI_LOOK_CSS}`;
     bannerHandle = null;
     bannerText = "";
   }
-  var statsEl;
-  var childrenTitleEl;
-  var childrenWrap;
-  var saveStateEl;
-  var listHandle = null;
-  var saveBtn = null;
-  var exemptBtn = null;
-  var swEnabled = null;
-  var swAuto = null;
-  var tfWord = null;
-  var tfPool = null;
-  var tfRead = null;
-  var tfWeb = null;
-  var tfCmd = null;
-  var tfCap = null;
   function buildDom() {
     if (built) return;
     built = true;
     root.innerHTML = "";
     const hd = el2("div", "hd");
     hd.append(el2("h1", "", "assistant \u5B88\u536B"));
-    statsEl = el2("div", "stats muted");
+    statsEl = el2("div", "stats muted", "\u7EDF\u8BA1\u52A0\u8F7D\u4E2D\u2026");
     hd.append(statsEl);
     root.append(hd);
     bannerWrap = el2("div");
     root.append(bannerWrap);
-    const cSec = el2("div", "section");
-    childrenTitleEl = el2("div", "section-title", "\u5B50\u4EE3\u7406");
-    childrenWrap = el2("div");
-    cSec.append(childrenTitleEl, childrenWrap);
-    root.append(cSec);
     const sSec = el2("div", "section");
-    sSec.append(el2("div", "section-title", "\u8BBE\u7F6E"), el2("div", "muted", "\u6539\u5B8C\u70B9\u4FDD\u5B58\uFF1B\u63D2\u4EF6\u6BCF\u8F6E prompt \u65F6\u91CD\u8BFB\u914D\u7F6E\u3002"));
+    sSec.append(
+      el2("div", "section-title", "\u8BBE\u7F6E"),
+      el2("div", "muted", `\u6539\u5B8C\u70B9\u4FDD\u5B58\uFF0C\u5199\u5165 ${CONFIG_PATH}\uFF1B\u63D2\u4EF6\u6BCF\u8F6E\u91CD\u8BFB\u3002`)
+    );
     const wrap = el2("div", "settings");
     buildSettings(wrap);
     sSec.append(wrap);
     root.append(sSec);
-    renderPlaceholder();
   }
   function buildSettings(wrap) {
     const mark = () => {
       dirty = true;
-      if (saveBtn) saveBtn.update({ disabled: false });
-      saveStateEl.textContent = "\u6709\u672A\u4FDD\u5B58\u66F4\u6539";
+      saveBtn?.update({ disabled: false });
+      if (saveStateEl) saveStateEl.textContent = "\u6709\u672A\u4FDD\u5B58\u66F4\u6539";
     };
     swEnabled = mountSwitch(wrap, {
       label: "\u63D2\u4EF6\u603B\u5F00\u5173",
@@ -2193,15 +2081,6 @@ ${GUEST_UI_LOOK_CSS}`;
       checked: true,
       onChange: (v2) => {
         if (draft) draft.enabled = v2;
-        mark();
-      }
-    });
-    swAuto = mountSwitch(wrap, {
-      label: "\u6D3E\u5355\u8054\u52A8\uFF08\u81EA\u52A8\u5F39\u5B50\u4EE3\u7406\u4F1A\u8BDD\uFF09",
-      description: "\u65B0\u5B50\u4EE3\u7406\u51FA\u73B0\u5373\u5F39\u51FA\uFF1B20 \u79D2\u5185\u53EA\u8DF3\u7B2C\u4E00\u4E2A",
-      checked: true,
-      onChange: (v2) => {
-        if (draft) draft.autoOpen = v2;
         mark();
       }
     });
@@ -2229,7 +2108,7 @@ ${GUEST_UI_LOOK_CSS}`;
       label: "\u603B\u989D\xB7\u8BFB",
       value: "",
       onChange: (v2) => {
-        if (draft) draft.sessionTotals.read = v2.trim() === "" ? NaN : Number(v2);
+        if (draft) draft.read = v2.trim() === "" ? NaN : Number(v2);
         mark();
       }
     });
@@ -2237,7 +2116,7 @@ ${GUEST_UI_LOOK_CSS}`;
       label: "\u603B\u989D\xB7\u7F51",
       value: "",
       onChange: (v2) => {
-        if (draft) draft.sessionTotals.web = v2.trim() === "" ? NaN : Number(v2);
+        if (draft) draft.web = v2.trim() === "" ? NaN : Number(v2);
         mark();
       }
     });
@@ -2245,7 +2124,7 @@ ${GUEST_UI_LOOK_CSS}`;
       label: "\u603B\u989D\xB7\u547D\u4EE4",
       value: "",
       onChange: (v2) => {
-        if (draft) draft.sessionTotals.command = v2.trim() === "" ? NaN : Number(v2);
+        if (draft) draft.command = v2.trim() === "" ? NaN : Number(v2);
         mark();
       }
     });
@@ -2273,13 +2152,12 @@ ${GUEST_UI_LOOK_CSS}`;
     exemptRow.append(el2("span", "save-state", "\u672C\u4F1A\u8BDD\u5168\u90E8\u76F4\u67E5\u4E0D\u8BA1\u6570\uFF08\u63D2\u4EF6\u4FA7\u5373\u523B\u751F\u6548\uFF09"));
     wrap.append(exemptRow);
   }
-  function renderPlaceholder() {
-    if (!built) return;
-    childrenTitleEl.textContent = sessionId ? "\u5B50\u4EE3\u7406" : "\u5B50\u4EE3\u7406\uFF08\u672A\u6253\u5F00\u4F1A\u8BDD\uFF09";
-    if (!sessionId && statsEl) statsEl.textContent = "\u672A\u6253\u5F00\u4F1A\u8BDD \xB7 \u8BBE\u7F6E\u4ECD\u53EF\u7F16\u8F91";
-  }
   function renderStats(stats) {
     if (!statsEl) return;
+    if (!stats) {
+      statsEl.textContent = "\u6682\u65E0\u7EDF\u8BA1\uFF08\u63D2\u4EF6\u5C1A\u672A\u5199\u5165 assistant-counts.json\uFF09";
+      return;
+    }
     const lr = stats.lastReject;
     let text = `\u62E6\u622A ${stats.rejected} \xB7 \u6D3E\u5355 ${stats.dispatched} \xB7 \u8C41\u514D ${stats.exempted}`;
     if (lr) {
@@ -2288,102 +2166,97 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     statsEl.textContent = text;
   }
-  function renderChildren(children, dbError) {
-    if (!childrenTitleEl) return;
-    childrenTitleEl.textContent = `\u5B50\u4EE3\u7406\uFF08${children.length}\uFF09${dbError ? " \xB7 \u8BFB\u5E93\u5931\u8D25" : ""}`;
-    const items = children.slice().reverse().slice(0, 60).map((c) => ({
-      id: c.id,
-      title: c.title || `${agentLabel(c.agent)} \u5B50\u4F1A\u8BDD`,
-      subtitle: `${agentLabel(c.agent)} \xB7 ${fmtTime(c.created)}`
-    }));
-    if (!listHandle) {
-      listHandle = mountList(childrenWrap, { items, emptyText: "\u672C\u4F1A\u8BDD\u6682\u65E0\u5B50\u4EE3\u7406", onSelect: (id) => void openChild(id, "manual") });
-    } else {
-      listHandle.update({ items });
-    }
-  }
   function applyConfig(cfg, force) {
+    config = cfg;
     if (!draft) {
-      draft = JSON.parse(JSON.stringify(cfg));
+      draft = draftFrom(cfg);
       dirty = false;
     } else if (!force && dirty) {
+      renderExempt(cfg.exemptSessions[sessionId ?? ""] === true);
       return;
     } else {
-      draft = JSON.parse(JSON.stringify(cfg));
+      draft = draftFrom(cfg);
     }
     const d = draft;
     swEnabled?.update({ checked: d.enabled });
-    swAuto?.update({ checked: d.autoOpen });
     tfWord?.update({ value: d.exemptionWord });
     tfPool?.update({ value: String(d.poolPerRound) });
-    tfRead?.update({ value: String(d.sessionTotals.read) });
-    tfWeb?.update({ value: String(d.sessionTotals.web) });
-    tfCmd?.update({ value: String(d.sessionTotals.command) });
+    tfRead?.update({ value: String(d.read) });
+    tfWeb?.update({ value: String(d.web) });
+    tfCmd?.update({ value: String(d.command) });
     tfCap?.update({ value: String(d.exemptionRoundCap) });
     if (force) dirty = false;
     saveBtn?.update({ disabled: !dirty });
-    if (!dirty) saveStateEl.textContent = "";
+    if (!dirty && saveStateEl) saveStateEl.textContent = "";
+    renderExempt(cfg.exemptSessions[sessionId ?? ""] === true);
+  }
+  function draftFrom(cfg) {
+    return {
+      enabled: cfg.enabled,
+      exemptionWord: cfg.exemptionWord,
+      poolPerRound: cfg.poolPerRound,
+      read: cfg.sessionTotals.read,
+      web: cfg.sessionTotals.web,
+      command: cfg.sessionTotals.command,
+      exemptionRoundCap: cfg.exemptionRoundCap
+    };
   }
   function renderExempt(on) {
-    if (!exemptBtn) return;
-    exemptBtn.update({ label: on ? "\u6574\u573A\u653E\u884C\uFF1A\u5F00" : "\u6574\u573A\u653E\u884C\uFF1A\u5173", variant: on ? "outline" : "secondary", disabled: !sessionId });
+    exemptBtn?.update({
+      label: on ? "\u6574\u573A\u653E\u884C\uFF1A\u5F00" : "\u6574\u573A\u653E\u884C\uFF1A\u5173",
+      variant: on ? "outline" : "secondary",
+      disabled: !sessionId
+    });
   }
-  async function openChild(id, why) {
+  function errText(err) {
+    if (err instanceof HostRequestError) return err.code;
+    return err instanceof Error ? err.message : String(err);
+  }
+  function isNotFound(err) {
+    return err instanceof HostRequestError && (err.code === "NOT_FOUND" || err.code === "NO_FILE");
+  }
+  async function readConfigFile() {
     try {
-      await host.openSession(id);
-      log("open.ok", { id, why });
+      const res = await host.readFile(CONFIG_PATH);
+      return { cfg: normalizeConfig(JSON.parse(res.content)), missing: false };
     } catch (err) {
-      const code = err instanceof HostRequestError ? err.code : "unknown";
-      log("open.fail", { id, why, code: String(code) });
-      if (why === "auto" && code !== "NO_SESSION") {
-        void host.toast({ kind: "info", message: `\u5B50\u4EE3\u7406\u4F1A\u8BDD\u8DF3\u8F6C\u5931\u8D25\uFF08${String(code)}\uFF09\uFF0C\u53EF\u5728\u9762\u677F\u91CC\u624B\u52A8\u70B9\u5F00`, dismiss: true }).catch(() => {
-        });
-      }
+      if (isNotFound(err)) return { cfg: clone(DEFAULT_CONFIG), missing: true };
+      throw err;
     }
   }
-  function maybeAutoOpen(children, cfg) {
-    const fresh = children.filter((c) => !seen.has(c.id) && c.created > baseAt - BASE_SLACK_MS);
-    for (const c of children) seen.add(c.id);
-    if (!cfg.autoOpen || !sessionId || fresh.length === 0) return;
-    const first = fresh[0];
-    if (Date.now() - lastAutoAt < AUTO_COOLDOWN_MS) {
-      log("auto.skip", { id: first.id, why: "cooldown" });
-      return;
-    }
-    lastAutoAt = Date.now();
-    log("auto.open", { id: first.id, title: first.title, count: fresh.length });
-    void openChild(first.id, "auto");
-  }
-  async function fetchSnapshot() {
+  async function readCountsFile() {
     try {
-      const query = sessionId ? { sessionId } : {};
-      const res = await host.serviceRequest({ method: "GET", path: "/snapshot", query });
-      const payload = JSON.parse(res.body);
-      if (res.status === 200 && payload && payload.ok) return { snap: payload };
-      return { error: payload?.message ?? `HTTP ${res.status}` };
-    } catch (err) {
-      if (err instanceof HostRequestError) {
-        return { error: err.code === "NO_SERVICE" ? "\u672C\u5730\u670D\u52A1\u672A\u542F\u52A8\u6216\u672A\u6388\u6743" : err.message };
-      }
-      return { error: err instanceof Error ? err.message : String(err) };
+      const res = await host.readFile(COUNTS_PATH);
+      const raw = JSON.parse(res.content);
+      return {
+        rejected: intOr(raw.rejected, 0),
+        dispatched: intOr(raw.dispatched, 0),
+        exempted: intOr(raw.exempted, 0),
+        updatedAt: intOr(raw.updatedAt, 0),
+        lastReject: raw.lastReject ?? null
+      };
+    } catch {
+      return null;
     }
+  }
+  async function writeConfigFile(cfg) {
+    await host.writeFile(CONFIG_PATH, `${JSON.stringify(cfg, null, 2)}
+`);
   }
   async function poll() {
     if (!built || polling) return;
     polling = true;
     try {
-      const { snap, error } = await fetchSnapshot();
-      if (!snap) {
-        setBanner("warning", "\u672C\u5730\u670D\u52A1\u4E0D\u53EF\u7528", error ?? "\u672A\u77E5\u9519\u8BEF");
-        return;
+      const [cfgRes, stats] = await Promise.all([readConfigFile(), readCountsFile()]);
+      renderStats(stats);
+      if (cfgRes.missing) {
+        setBanner("info", "\u8FD8\u6CA1\u6709\u914D\u7F6E\u6587\u4EF6", `\u4FDD\u5B58\u4E00\u6B21\u5373\u53EF\u521B\u5EFA ${CONFIG_PATH}\uFF08\u5F53\u524D\u663E\u793A\u9ED8\u8BA4\u503C\uFF09`);
+      } else {
+        clearBanner();
       }
-      clearBanner();
-      current = snap;
-      renderStats(snap.stats);
-      renderChildren(snap.children, snap.dbError);
-      applyConfig(snap.config, false);
-      renderExempt(snap.exempt);
-      maybeAutoOpen(snap.children, snap.config);
+      applyConfig(cfgRes.cfg, false);
+    } catch (err) {
+      setBanner("warning", "\u8BFB\u914D\u7F6E\u5931\u8D25", `${errText(err)} \xB7 ${CONFIG_PATH}`);
     } finally {
       polling = false;
     }
@@ -2394,33 +2267,33 @@ ${GUEST_UI_LOOK_CSS}`;
     const bad = [];
     const okInt = (v2, min, max) => Number.isInteger(v2) && v2 >= min && v2 <= max;
     if (!okInt(d.poolPerRound, 0, 50)) bad.push("\u6BCF\u8F6E\u6C60");
-    if (!okInt(d.sessionTotals.read, 0, 1e4)) bad.push("\u603B\u989D\xB7\u8BFB");
-    if (!okInt(d.sessionTotals.web, 0, 1e4)) bad.push("\u603B\u989D\xB7\u7F51");
-    if (!okInt(d.sessionTotals.command, 0, 1e4)) bad.push("\u603B\u989D\xB7\u547D\u4EE4");
+    if (!okInt(d.read, 0, 1e4)) bad.push("\u603B\u989D\xB7\u8BFB");
+    if (!okInt(d.web, 0, 1e4)) bad.push("\u603B\u989D\xB7\u7F51");
+    if (!okInt(d.command, 0, 1e4)) bad.push("\u603B\u989D\xB7\u547D\u4EE4");
     if (!okInt(d.exemptionRoundCap, 0, 100)) bad.push("\u8C41\u514D\u8F6E\u6B21\u4E0A\u9650");
     if (!d.exemptionWord.trim()) bad.push("\u8C41\u514D\u8BCD");
     if (bad.length) {
-      saveStateEl.textContent = `\u68C0\u67E5\uFF1A${bad.join("\u3001")}`;
+      if (saveStateEl) saveStateEl.textContent = `\u68C0\u67E5\uFF1A${bad.join("\u3001")}`;
       return;
     }
     saving = true;
     saveBtn?.update({ loading: true });
     try {
-      const res = await host.serviceRequest({
-        method: "POST",
-        path: "/config",
-        body: JSON.stringify({ config: { ...d, exemptionWord: d.exemptionWord.trim() } })
-      });
-      const payload = JSON.parse(res.body);
-      if (res.status !== 200 || !payload?.ok || !payload.config) throw new Error(payload?.message ?? `HTTP ${res.status}`);
-      applyConfig(payload.config, true);
-      saveStateEl.textContent = "\u5DF2\u4FDD\u5B58";
-      log("config.saved");
+      const next = {
+        enabled: d.enabled,
+        exemptionWord: d.exemptionWord.trim(),
+        poolPerRound: d.poolPerRound,
+        sessionTotals: { read: d.read, web: d.web, command: d.command },
+        exemptionRoundCap: d.exemptionRoundCap,
+        exemptSessions: config.exemptSessions
+      };
+      await writeConfigFile(next);
+      applyConfig(next, true);
+      if (saveStateEl) saveStateEl.textContent = "\u5DF2\u4FDD\u5B58";
       void host.toast({ kind: "success", message: "assistant \u8BBE\u7F6E\u5DF2\u4FDD\u5B58" }).catch(() => {
       });
     } catch (err) {
-      saveStateEl.textContent = `\u4FDD\u5B58\u5931\u8D25\uFF1A${err instanceof Error ? err.message : String(err)}`;
-      log("config.fail", { message: err instanceof Error ? err.message : String(err) });
+      if (saveStateEl) saveStateEl.textContent = `\u4FDD\u5B58\u5931\u8D25\uFF1A${errText(err)}`;
     } finally {
       saving = false;
       saveBtn?.update({ loading: false, disabled: !dirty });
@@ -2428,28 +2301,26 @@ ${GUEST_UI_LOOK_CSS}`;
   }
   async function toggleExempt() {
     if (!sessionId) return;
-    const next = !(current?.exempt ?? false);
+    const on = config.exemptSessions[sessionId] === true;
+    const nextMap = { ...config.exemptSessions };
+    if (on) delete nextMap[sessionId];
+    else nextMap[sessionId] = true;
+    const next = { ...config, exemptSessions: nextMap };
+    exemptBtn?.update({ loading: true });
     try {
-      const res = await host.serviceRequest({ method: "POST", path: "/exempt", body: JSON.stringify({ sessionId, value: next }) });
-      const payload = JSON.parse(res.body);
-      if (res.status === 200 && payload?.ok && payload.config && current) {
-        current = { ...current, exempt: next, config: payload.config };
-        renderExempt(next);
-        log("exempt.toggle", { value: next });
-      }
+      await writeConfigFile(next);
+      applyConfig(next, true);
     } catch (err) {
-      log("exempt.fail", { message: err instanceof Error ? err.message : String(err) });
+      if (saveStateEl) saveStateEl.textContent = `\u6574\u573A\u653E\u884C\u5931\u8D25\uFF1A${errText(err)}`;
+    } finally {
+      exemptBtn?.update({ loading: false });
     }
   }
   function attachSession(id) {
     if (id === sessionId) return;
     sessionId = id;
-    baseAt = Date.now();
-    seen = /* @__PURE__ */ new Set();
-    lastAutoAt = 0;
-    log("session.changed", { sessionId: id });
     if (built) {
-      renderPlaceholder();
+      renderExempt(config.exemptSessions[id ?? ""] === true);
       void poll();
     }
   }

@@ -1,25 +1,23 @@
 /**
- * assistant 面板
+ * assistant 面板（纯设置 + 统计）
  *
- * - 头顶：守卫统计一行（拦截 / 派单 / 豁免 + 最近一条拦截）
- * - 子代理列表：当前会话的子代理子会话，点一下跳过去
- * - 联动（核心）：1.5s 轮询本地服务；新子会话出现 → 自动 host.openSession 弹出
- *   规则：只跳批量里第一个；两次自动跳间隔 ≥ 20s；联动开关关闭即停；NO_SESSION 静默跳过
- * - 设置：6 个可调项 + 本会话「整场放行」→ 写 ~/.config/opencode/assistant.json
+ * - 头顶：守卫统计一行（拦截 / 派单 / 豁免 + 最近一条拦截），数据来自插件写的
+ *   `~/.config/opencode/assistant-counts.json`
+ * - 设置：总开关 / 豁免词 / 每轮直查额度 / 会话总额（读·网·命令）/ 豁免轮次上限
+ *   + 本会话「整场放行」——全部直接读写 `~/.config/opencode/assistant.json`
+ * - 无后台服务、无联动、无子代理列表：面板只用宿主的文件能力（filesystem）
  *
- * 面板折叠仍挂载（宿主行为），所以隐藏时联动照跑。
+ * 面板折叠后仍挂载（宿主行为），所以统计会继续刷新（5s 一次，文件很小）。
  */
 import { connectHost, HostRequestError } from '@openchamber/sdk';
 import {
   applyHostReady,
   mountBanner,
   mountButton,
-  mountList,
   mountSwitch,
   mountTextField,
   type BannerHandle,
   type ButtonHandle,
-  type ListHandle,
   type SwitchHandle,
   type TextFieldHandle,
 } from '@openchamber/sdk/ui';
@@ -27,16 +25,16 @@ import {
 const host = connectHost();
 const root = document.querySelector('#root') as HTMLElement;
 
-const POLL_MS = 1500;
-const AUTO_COOLDOWN_MS = 20_000;
-const BASE_SLACK_MS = 3_000;
+const CONFIG_PATH = '~/.config/opencode/assistant.json';
+const COUNTS_PATH = '~/.config/opencode/assistant-counts.json';
+const POLL_MS = 5000;
 
+type Totals = { read: number; web: number; command: number };
 type Config = {
   enabled: boolean;
-  autoOpen: boolean;
   exemptionWord: string;
   poolPerRound: number;
-  sessionTotals: { read: number; web: number; command: number };
+  sessionTotals: Totals;
   exemptionRoundCap: number;
   exemptSessions: Record<string, boolean>;
 };
@@ -47,15 +45,15 @@ type Stats = {
   updatedAt: number;
   lastReject: { tool?: string; reason?: string; at?: number; sessionID?: string } | null;
 };
-type Child = { id: string; title: string; created: number; agent: string };
-type Snapshot = {
-  ok: true;
-  now: number;
-  config: Config;
-  stats: Stats;
-  children: Child[];
-  exempt: boolean;
-  dbError: string | null;
+
+/** 与插件的默认值一致；配置文件缺失/字段缺失时兜底。 */
+const DEFAULT_CONFIG: Config = {
+  enabled: true,
+  exemptionWord: '#nocap',
+  poolPerRound: 3,
+  sessionTotals: { read: 30, web: 10, command: 12 },
+  exemptionRoundCap: 5,
+  exemptSessions: {},
 };
 
 const REASON_LABEL: Record<string, string> = {
@@ -72,14 +70,20 @@ const REASON_LABEL: Record<string, string> = {
 
 let built = false;
 let sessionId: string | null = null;
-let baseAt = 0;
-let seen = new Set<string>();
-let lastAutoAt = 0;
-let draft: Config | null = null;
+let config: Config = clone(DEFAULT_CONFIG);
+/** 设置区可编辑的字段（exemptSessions 不在草稿里，避免与「整场放行」互相覆盖）。 */
+let draft: {
+  enabled: boolean;
+  exemptionWord: string;
+  poolPerRound: number;
+  read: number;
+  web: number;
+  command: number;
+  exemptionRoundCap: number;
+} | null = null;
 let dirty = false;
 let saving = false;
 let polling = false;
-let current: Snapshot | null = null;
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -92,6 +96,10 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
   return node;
 }
 
+function clone<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v)) as T;
+}
+
 function fmtTime(ts: number): string {
   if (!ts) return '—';
   const d = new Date(ts);
@@ -99,19 +107,54 @@ function fmtTime(ts: number): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-function agentLabel(agent: string): string {
-  return agent || '子代理';
+function intOr(v: unknown, fallback: number): number {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : fallback;
 }
 
-function log(event: string, data?: unknown): void {
-  void host
-    .serviceRequest({ method: 'POST', path: '/panellog', body: JSON.stringify({ event, data: data ?? null }) })
-    .catch(() => {});
+/** 把文件里读到的内容规整成完整 Config（未知键丢弃，缺失键取默认）。 */
+function normalizeConfig(raw: unknown): Config {
+  const d = DEFAULT_CONFIG;
+  if (!raw || typeof raw !== 'object') return clone(d);
+  const r = raw as Record<string, unknown>;
+  const totals = (r.sessionTotals ?? {}) as Record<string, unknown>;
+  const exemptIn = (r.exemptSessions ?? {}) as Record<string, unknown>;
+  const exempt: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(exemptIn)) {
+    if (v === true && /^[A-Za-z0-9_-]{1,80}$/.test(k)) exempt[k] = true;
+  }
+  return {
+    enabled: typeof r.enabled === 'boolean' ? r.enabled : d.enabled,
+    exemptionWord: typeof r.exemptionWord === 'string' && r.exemptionWord.trim() ? r.exemptionWord : d.exemptionWord,
+    poolPerRound: intOr(r.poolPerRound, d.poolPerRound),
+    sessionTotals: {
+      read: intOr(totals.read, d.sessionTotals.read),
+      web: intOr(totals.web, d.sessionTotals.web),
+      command: intOr(totals.command, d.sessionTotals.command),
+    },
+    exemptionRoundCap: intOr(r.exemptionRoundCap, d.exemptionRoundCap),
+    exemptSessions: exempt,
+  };
 }
 
-let bannerWrap: HTMLElement;
+// ---------------------------------------------------------------------------
+// DOM
+// ---------------------------------------------------------------------------
+
+let statsEl!: HTMLElement;
+let saveStateEl!: HTMLElement;
+let bannerWrap!: HTMLElement;
 let bannerHandle: BannerHandle | null = null;
 let bannerText = '';
+
+let saveBtn: ButtonHandle | null = null;
+let exemptBtn: ButtonHandle | null = null;
+let swEnabled: SwitchHandle | null = null;
+let tfWord: TextFieldHandle | null = null;
+let tfPool: TextFieldHandle | null = null;
+let tfRead: TextFieldHandle | null = null;
+let tfWeb: TextFieldHandle | null = null;
+let tfCmd: TextFieldHandle | null = null;
+let tfCap: TextFieldHandle | null = null;
 
 function setBanner(tone: 'info' | 'warning' | 'error', title: string, body: string): void {
   const key = `${tone}|${title}|${body}`;
@@ -128,27 +171,6 @@ function clearBanner(): void {
   bannerText = '';
 }
 
-// ---------------------------------------------------------------------------
-// DOM
-// ---------------------------------------------------------------------------
-
-let statsEl!: HTMLElement;
-let childrenTitleEl!: HTMLElement;
-let childrenWrap!: HTMLElement;
-let saveStateEl!: HTMLElement;
-
-let listHandle: ListHandle | null = null;
-let saveBtn: ButtonHandle | null = null;
-let exemptBtn: ButtonHandle | null = null;
-let swEnabled: SwitchHandle | null = null;
-let swAuto: SwitchHandle | null = null;
-let tfWord: TextFieldHandle | null = null;
-let tfPool: TextFieldHandle | null = null;
-let tfRead: TextFieldHandle | null = null;
-let tfWeb: TextFieldHandle | null = null;
-let tfCmd: TextFieldHandle | null = null;
-let tfCap: TextFieldHandle | null = null;
-
 function buildDom(): void {
   if (built) return;
   built = true;
@@ -156,34 +178,29 @@ function buildDom(): void {
 
   const hd = el('div', 'hd');
   hd.append(el('h1', '', 'assistant 守卫'));
-  statsEl = el('div', 'stats muted');
+  statsEl = el('div', 'stats muted', '统计加载中…');
   hd.append(statsEl);
   root.append(hd);
 
   bannerWrap = el('div');
   root.append(bannerWrap);
 
-  const cSec = el('div', 'section');
-  childrenTitleEl = el('div', 'section-title', '子代理');
-  childrenWrap = el('div');
-  cSec.append(childrenTitleEl, childrenWrap);
-  root.append(cSec);
-
   const sSec = el('div', 'section');
-  sSec.append(el('div', 'section-title', '设置'), el('div', 'muted', '改完点保存；插件每轮 prompt 时重读配置。'));
+  sSec.append(
+    el('div', 'section-title', '设置'),
+    el('div', 'muted', `改完点保存，写入 ${CONFIG_PATH}；插件每轮重读。`),
+  );
   const wrap = el('div', 'settings');
   buildSettings(wrap);
   sSec.append(wrap);
   root.append(sSec);
-
-  renderPlaceholder();
 }
 
 function buildSettings(wrap: HTMLElement): void {
   const mark = (): void => {
     dirty = true;
-    if (saveBtn) saveBtn.update({ disabled: false });
-    saveStateEl.textContent = '有未保存更改';
+    saveBtn?.update({ disabled: false });
+    if (saveStateEl) saveStateEl.textContent = '有未保存更改';
   };
 
   swEnabled = mountSwitch(wrap, {
@@ -192,16 +209,6 @@ function buildSettings(wrap: HTMLElement): void {
     checked: true,
     onChange: (v) => {
       if (draft) draft.enabled = v;
-      mark();
-    },
-  });
-
-  swAuto = mountSwitch(wrap, {
-    label: '派单联动（自动弹子代理会话）',
-    description: '新子代理出现即弹出；20 秒内只跳第一个',
-    checked: true,
-    onChange: (v) => {
-      if (draft) draft.autoOpen = v;
       mark();
     },
   });
@@ -232,7 +239,7 @@ function buildSettings(wrap: HTMLElement): void {
     label: '总额·读',
     value: '',
     onChange: (v) => {
-      if (draft) draft.sessionTotals.read = v.trim() === '' ? NaN : Number(v);
+      if (draft) draft.read = v.trim() === '' ? NaN : Number(v);
       mark();
     },
   });
@@ -240,7 +247,7 @@ function buildSettings(wrap: HTMLElement): void {
     label: '总额·网',
     value: '',
     onChange: (v) => {
-      if (draft) draft.sessionTotals.web = v.trim() === '' ? NaN : Number(v);
+      if (draft) draft.web = v.trim() === '' ? NaN : Number(v);
       mark();
     },
   });
@@ -248,7 +255,7 @@ function buildSettings(wrap: HTMLElement): void {
     label: '总额·命令',
     value: '',
     onChange: (v) => {
-      if (draft) draft.sessionTotals.command = v.trim() === '' ? NaN : Number(v);
+      if (draft) draft.command = v.trim() === '' ? NaN : Number(v);
       mark();
     },
   });
@@ -280,18 +287,16 @@ function buildSettings(wrap: HTMLElement): void {
   wrap.append(exemptRow);
 }
 
-function renderPlaceholder(): void {
-  if (!built) return;
-  childrenTitleEl.textContent = sessionId ? '子代理' : '子代理（未打开会话）';
-  if (!sessionId && statsEl) statsEl.textContent = '未打开会话 · 设置仍可编辑';
-}
-
 // ---------------------------------------------------------------------------
 // 渲染
 // ---------------------------------------------------------------------------
 
-function renderStats(stats: Stats): void {
+function renderStats(stats: Stats | null): void {
   if (!statsEl) return;
+  if (!stats) {
+    statsEl.textContent = '暂无统计（插件尚未写入 assistant-counts.json）';
+    return;
+  }
   const lr = stats.lastReject;
   let text = `拦截 ${stats.rejected} · 派单 ${stats.dispatched} · 豁免 ${stats.exempted}`;
   if (lr) {
@@ -301,117 +306,112 @@ function renderStats(stats: Stats): void {
   statsEl.textContent = text;
 }
 
-function renderChildren(children: Child[], dbError: string | null): void {
-  if (!childrenTitleEl) return;
-  childrenTitleEl.textContent = `子代理（${children.length}）${dbError ? ' · 读库失败' : ''}`;
-  const items = children
-    .slice()
-    .reverse()
-    .slice(0, 60)
-    .map((c) => ({
-      id: c.id,
-      title: c.title || `${agentLabel(c.agent)} 子会话`,
-      subtitle: `${agentLabel(c.agent)} · ${fmtTime(c.created)}`,
-    }));
-  if (!listHandle) {
-    listHandle = mountList(childrenWrap, { items, emptyText: '本会话暂无子代理', onSelect: (id) => void openChild(id, 'manual') });
-  } else {
-    listHandle.update({ items });
-  }
-}
-
 function applyConfig(cfg: Config, force: boolean): void {
+  config = cfg;
   if (!draft) {
-    draft = JSON.parse(JSON.stringify(cfg)) as Config;
+    draft = draftFrom(cfg);
     dirty = false;
   } else if (!force && dirty) {
+    renderExempt(cfg.exemptSessions[sessionId ?? ''] === true);
     return; // 用户正在编辑，别覆盖
   } else {
-    draft = JSON.parse(JSON.stringify(cfg)) as Config;
+    draft = draftFrom(cfg);
   }
-  const d = draft as Config;
+  const d = draft;
   swEnabled?.update({ checked: d.enabled });
-  swAuto?.update({ checked: d.autoOpen });
   tfWord?.update({ value: d.exemptionWord });
   tfPool?.update({ value: String(d.poolPerRound) });
-  tfRead?.update({ value: String(d.sessionTotals.read) });
-  tfWeb?.update({ value: String(d.sessionTotals.web) });
-  tfCmd?.update({ value: String(d.sessionTotals.command) });
+  tfRead?.update({ value: String(d.read) });
+  tfWeb?.update({ value: String(d.web) });
+  tfCmd?.update({ value: String(d.command) });
   tfCap?.update({ value: String(d.exemptionRoundCap) });
   if (force) dirty = false;
   saveBtn?.update({ disabled: !dirty });
-  if (!dirty) saveStateEl.textContent = '';
+  if (!dirty && saveStateEl) saveStateEl.textContent = '';
+  renderExempt(cfg.exemptSessions[sessionId ?? ''] === true);
+}
+
+function draftFrom(cfg: Config): NonNullable<typeof draft> {
+  return {
+    enabled: cfg.enabled,
+    exemptionWord: cfg.exemptionWord,
+    poolPerRound: cfg.poolPerRound,
+    read: cfg.sessionTotals.read,
+    web: cfg.sessionTotals.web,
+    command: cfg.sessionTotals.command,
+    exemptionRoundCap: cfg.exemptionRoundCap,
+  };
 }
 
 function renderExempt(on: boolean): void {
-  if (!exemptBtn) return;
-  exemptBtn.update({ label: on ? '整场放行：开' : '整场放行：关', variant: on ? 'outline' : 'secondary', disabled: !sessionId });
+  exemptBtn?.update({
+    label: on ? '整场放行：开' : '整场放行：关',
+    variant: on ? 'outline' : 'secondary',
+    disabled: !sessionId,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 文件读写
+// ---------------------------------------------------------------------------
+
+function errText(err: unknown): string {
+  if (err instanceof HostRequestError) return err.code;
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isNotFound(err: unknown): boolean {
+  return err instanceof HostRequestError && (err.code === 'NOT_FOUND' || err.code === 'NO_FILE');
+}
+
+async function readConfigFile(): Promise<{ cfg: Config; missing: boolean }> {
+  try {
+    const res = await host.readFile(CONFIG_PATH);
+    return { cfg: normalizeConfig(JSON.parse(res.content)), missing: false };
+  } catch (err) {
+    if (isNotFound(err)) return { cfg: clone(DEFAULT_CONFIG), missing: true };
+    throw err;
+  }
+}
+
+async function readCountsFile(): Promise<Stats | null> {
+  try {
+    const res = await host.readFile(COUNTS_PATH);
+    const raw = JSON.parse(res.content) as Partial<Stats>;
+    return {
+      rejected: intOr(raw.rejected, 0),
+      dispatched: intOr(raw.dispatched, 0),
+      exempted: intOr(raw.exempted, 0),
+      updatedAt: intOr(raw.updatedAt, 0),
+      lastReject: raw.lastReject ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeConfigFile(cfg: Config): Promise<void> {
+  await host.writeFile(CONFIG_PATH, `${JSON.stringify(cfg, null, 2)}\n`);
 }
 
 // ---------------------------------------------------------------------------
 // 动作
 // ---------------------------------------------------------------------------
 
-async function openChild(id: string, why: 'auto' | 'manual'): Promise<void> {
-  try {
-    await host.openSession(id);
-    log('open.ok', { id, why });
-  } catch (err) {
-    const code = err instanceof HostRequestError ? err.code : 'unknown';
-    log('open.fail', { id, why, code: String(code) });
-    if (why === 'auto' && code !== 'NO_SESSION') {
-      void host
-        .toast({ kind: 'info', message: `子代理会话跳转失败（${String(code)}），可在面板里手动点开`, dismiss: true })
-        .catch(() => {});
-    }
-  }
-}
-
-function maybeAutoOpen(children: Child[], cfg: Config): void {
-  const fresh = children.filter((c) => !seen.has(c.id) && c.created > baseAt - BASE_SLACK_MS);
-  for (const c of children) seen.add(c.id);
-  if (!cfg.autoOpen || !sessionId || fresh.length === 0) return;
-  const first = fresh[0];
-  if (Date.now() - lastAutoAt < AUTO_COOLDOWN_MS) {
-    log('auto.skip', { id: first.id, why: 'cooldown' });
-    return;
-  }
-  lastAutoAt = Date.now();
-  log('auto.open', { id: first.id, title: first.title, count: fresh.length });
-  void openChild(first.id, 'auto');
-}
-
-async function fetchSnapshot(): Promise<{ snap?: Snapshot; error?: string }> {
-  try {
-    const query: Record<string, string> = sessionId ? { sessionId } : {};
-    const res = await host.serviceRequest({ method: 'GET', path: '/snapshot', query });
-    const payload = JSON.parse(res.body) as Snapshot & { message?: string };
-    if (res.status === 200 && payload && payload.ok) return { snap: payload };
-    return { error: payload?.message ?? `HTTP ${res.status}` };
-  } catch (err) {
-    if (err instanceof HostRequestError) {
-      return { error: err.code === 'NO_SERVICE' ? '本地服务未启动或未授权' : err.message };
-    }
-    return { error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
 async function poll(): Promise<void> {
   if (!built || polling) return;
   polling = true;
   try {
-    const { snap, error } = await fetchSnapshot();
-    if (!snap) {
-      setBanner('warning', '本地服务不可用', error ?? '未知错误');
-      return;
+    const [cfgRes, stats] = await Promise.all([readConfigFile(), readCountsFile()]);
+    renderStats(stats);
+    if (cfgRes.missing) {
+      setBanner('info', '还没有配置文件', `保存一次即可创建 ${CONFIG_PATH}（当前显示默认值）`);
+    } else {
+      clearBanner();
     }
-    clearBanner();
-    current = snap;
-    renderStats(snap.stats);
-    renderChildren(snap.children, snap.dbError);
-    applyConfig(snap.config, false);
-    renderExempt(snap.exempt);
-    maybeAutoOpen(snap.children, snap.config);
+    applyConfig(cfgRes.cfg, false);
+  } catch (err) {
+    setBanner('warning', '读配置失败', `${errText(err)} · ${CONFIG_PATH}`);
   } finally {
     polling = false;
   }
@@ -419,36 +419,36 @@ async function poll(): Promise<void> {
 
 async function save(): Promise<void> {
   if (!draft || saving) return;
-  const d = draft as Config;
+  const d = draft;
   const bad: string[] = [];
   const okInt = (v: number, min: number, max: number): boolean => Number.isInteger(v) && v >= min && v <= max;
   if (!okInt(d.poolPerRound, 0, 50)) bad.push('每轮池');
-  if (!okInt(d.sessionTotals.read, 0, 10000)) bad.push('总额·读');
-  if (!okInt(d.sessionTotals.web, 0, 10000)) bad.push('总额·网');
-  if (!okInt(d.sessionTotals.command, 0, 10000)) bad.push('总额·命令');
+  if (!okInt(d.read, 0, 10000)) bad.push('总额·读');
+  if (!okInt(d.web, 0, 10000)) bad.push('总额·网');
+  if (!okInt(d.command, 0, 10000)) bad.push('总额·命令');
   if (!okInt(d.exemptionRoundCap, 0, 100)) bad.push('豁免轮次上限');
   if (!d.exemptionWord.trim()) bad.push('豁免词');
   if (bad.length) {
-    saveStateEl.textContent = `检查：${bad.join('、')}`;
+    if (saveStateEl) saveStateEl.textContent = `检查：${bad.join('、')}`;
     return;
   }
   saving = true;
   saveBtn?.update({ loading: true });
   try {
-    const res = await host.serviceRequest({
-      method: 'POST',
-      path: '/config',
-      body: JSON.stringify({ config: { ...d, exemptionWord: d.exemptionWord.trim() } }),
-    });
-    const payload = JSON.parse(res.body) as { ok?: boolean; config?: Config; message?: string };
-    if (res.status !== 200 || !payload?.ok || !payload.config) throw new Error(payload?.message ?? `HTTP ${res.status}`);
-    applyConfig(payload.config, true);
-    saveStateEl.textContent = '已保存';
-    log('config.saved');
+    const next: Config = {
+      enabled: d.enabled,
+      exemptionWord: d.exemptionWord.trim(),
+      poolPerRound: d.poolPerRound,
+      sessionTotals: { read: d.read, web: d.web, command: d.command },
+      exemptionRoundCap: d.exemptionRoundCap,
+      exemptSessions: config.exemptSessions,
+    };
+    await writeConfigFile(next);
+    applyConfig(next, true);
+    if (saveStateEl) saveStateEl.textContent = '已保存';
     void host.toast({ kind: 'success', message: 'assistant 设置已保存' }).catch(() => {});
   } catch (err) {
-    saveStateEl.textContent = `保存失败：${err instanceof Error ? err.message : String(err)}`;
-    log('config.fail', { message: err instanceof Error ? err.message : String(err) });
+    if (saveStateEl) saveStateEl.textContent = `保存失败：${errText(err)}`;
   } finally {
     saving = false;
     saveBtn?.update({ loading: false, disabled: !dirty });
@@ -457,17 +457,19 @@ async function save(): Promise<void> {
 
 async function toggleExempt(): Promise<void> {
   if (!sessionId) return;
-  const next = !(current?.exempt ?? false);
+  const on = config.exemptSessions[sessionId] === true;
+  const nextMap = { ...config.exemptSessions };
+  if (on) delete nextMap[sessionId];
+  else nextMap[sessionId] = true;
+  const next: Config = { ...config, exemptSessions: nextMap };
+  exemptBtn?.update({ loading: true });
   try {
-    const res = await host.serviceRequest({ method: 'POST', path: '/exempt', body: JSON.stringify({ sessionId, value: next }) });
-    const payload = JSON.parse(res.body) as { ok?: boolean; config?: Config };
-    if (res.status === 200 && payload?.ok && payload.config && current) {
-      current = { ...current, exempt: next, config: payload.config };
-      renderExempt(next);
-      log('exempt.toggle', { value: next });
-    }
+    await writeConfigFile(next);
+    applyConfig(next, true);
   } catch (err) {
-    log('exempt.fail', { message: err instanceof Error ? err.message : String(err) });
+    if (saveStateEl) saveStateEl.textContent = `整场放行失败：${errText(err)}`;
+  } finally {
+    exemptBtn?.update({ loading: false });
   }
 }
 
@@ -478,12 +480,8 @@ async function toggleExempt(): Promise<void> {
 function attachSession(id: string | null): void {
   if (id === sessionId) return;
   sessionId = id;
-  baseAt = Date.now();
-  seen = new Set();
-  lastAutoAt = 0;
-  log('session.changed', { sessionId: id });
   if (built) {
-    renderPlaceholder();
+    renderExempt(config.exemptSessions[id ?? ''] === true);
     void poll();
   }
 }

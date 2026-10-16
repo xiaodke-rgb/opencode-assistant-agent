@@ -1,8 +1,8 @@
 {
   "name": "openchamber-assistant",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "assistant 三件套 · OpenChamber 扩展：派单联动（自动弹子代理会话）+ 设置 + 守卫统计",
+  "description": "assistant 三件套 · OpenChamber 扩展：设置 + 守卫统计（面板直读配置文件，无后台服务）",
   "scripts": {
     "build": "node build.mjs"
   },
@@ -24,16 +24,11 @@
         "icon": "icon.svg",
         "entry": "panel/index.html"
       },
-      "statusSection": {
-        "entry": "status/index.html",
-        "title": "assistant 子代理",
-        "height": 104
-      },
       "capabilities": ["sessions"],
-      "service": {
-        "entry": "service/main.js",
-        "runtime": "host"
-      },
+      "filesystem": [
+        "~/.config/opencode/assistant.json",
+        "~/.config/opencode/assistant-counts.json"
+      ],
       "attach": false
     }
   }

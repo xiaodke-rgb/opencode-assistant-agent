@@ -1,55 +1,45 @@
 # assistant 扩展（openchamber-assistant）
 
-assistant 三件套的 OpenChamber 扩展：**派单联动 + 设置 + 守卫统计**。
+assistant 三件套的 OpenChamber 扩展：**设置面板 + 守卫统计**（无后台服务）。
 
-- **联动（核心）**：轮询本地服务发现当前会话的新子代理子会话 → 自动 `openSession` 弹出（可关；20s 内只跳第一个，其余不抢跳；会话不存在则静默跳过）
-- **设置**：6 个可调项（总开关 / 联动 / 豁免词 / 每轮池 / 会话总额 / 豁免轮次上限）+ 本会话「整场放行」按钮，写 `~/.config/opencode/assistant.json`
-- **统计**：拦截 / 派单 / 豁免 + 最近一条拦截（数据来自插件的 `assistant-counts.json`，1.5s 轮询）
-- **Work Status 区块**：子代理数量 + 「打开最新」一键跳（兜底通道）
+- **设置**：总开关 / 豁免词 / 每轮直查额度（次）/ 会话总额（读·网·命令）/ 豁免轮次上限，外加本会话「整场放行」按钮
+  → 面板直接用宿主的 filesystem 能力读写 `~/.config/opencode/assistant.json`（宿主原子写，无服务、无轮询进程）
+- **统计**：拦截 / 派单 / 豁免 + 最近一条拦截（读插件写的 `~/.config/opencode/assistant-counts.json`，5s 刷新）
+
+> **联动暂缓（2026-10-16）**：OpenChamber 2.3.3 内部**已有**「子代理会话开在侧栏 chat 标签」的原生实现
+> （`openContextPanelTab(dir, { mode: "chat", dedupeKey: "session:<id>", readOnly: true })`，入口是聊天里的子任务卡片和
+> Work Status 的子代理行；宽屏布局才走侧栏，窄屏/移动端/pinned/isVSCode 会降级成切主视图），
+> 但**没有任何外部触发通道**（控制事件 / 扩展 SDK / 深链都没有）。上游加一个和 `file-open` 同级的控制事件后，本扩展再加回自动联动。
 
 ## 结构
 
-- `panel/`：侧栏面板（联动监听 + 设置表单 + 统计 + 子代理列表）
-- `status/`：Work Status 区块（一键跳）
-- `service/`：本地服务（全部文件 IO 都在这里）——
-  - 读 `~/.local/share/opencode/opencode.db`（`session_v2`，按 `parent_id` 找子会话；default chat 也可见）
-  - 读 `~/.config/opencode/assistant-counts.json`、写 `~/.config/opencode/assistant.json`（原子写）
-  - 写 `~/.config/opencode/assistant-panel.jsonl`（面板行为日志，联调排障用）
+- `panel/`：侧栏面板（统计一行 + 设置表单 + 整场放行）
+- `package.json`：manifest 在 `openchamber` 块里（panel id `assistant`，能力 `sessions` + `filesystem`）
+- `build.mjs`：esbuild 打包 `panel/main.ts` → `panel/main.js`
+- `icon.svg` / `LICENSE` / `tsconfig.json`
 
 ## 安装
 
-1. 把本目录放到 `~/.config/openchamber/extensions/assistant/`
-2. 在 OpenChamber「设置 → 扩展」里启用并批准一次授权（`sessions` + `service`）
-3. 侧栏出现「assistant 守卫」面板；把面板放在 rail 上保持挂载即可（折叠不影响监听）
+1. OpenChamber「设置 → 扩展 → 添加」，粘贴本目录路径
+2. 批准能力：`sessions`（读当前会话 id，供「整场放行」）+ `filesystem`（读写 `assistant.json`、读 `assistant-counts.json`）
+3. 侧栏出现「assistant 守卫」面板
 
-依赖运行中的 OpenCode（插件侧 assistant guard 在 `~/.config/opencode/plugins/assistant.ts`）。
+依赖运行中的 OpenCode（插件侧 guard 在 `~/.config/opencode/plugins/assistant.ts`）。
 
 ## 构建
 
 ```sh
-npm install        # 或复用别处的 node_modules
-npm run build      # 产出 panel/main.js、status/main.js、service/main.js
+node build.mjs     # 产物已随仓库提交，重建才需要
 ```
 
-没有本包 node_modules 时可用环境变量指路：
+没有本包 `node_modules` 时：
 
 ```sh
 OPENCHAMBER_SDK_NODE_MODULES=/path/to/node_modules node build.mjs
 ```
 
-## 服务路由
-
-| 路由 | 说明 |
-| --- | --- |
-| `GET /health` | 就绪探针 |
-| `GET /snapshot?sessionId=` | 配置 + 统计 + 子会话列表 + 整场放行状态 |
-| `POST /config` | 保存设置（与现有文件合并，原子写） |
-| `POST /exempt` | 本会话整场放行开 / 关 |
-| `POST /panellog` | 面板行为日志（写 `assistant-panel.jsonl`） |
-
 ## 已知限制
 
-- 服务轮询量级 1–2s；无事件推送
-- `default chat` 会话对 `onSessions` 不可见（所以走 service 读库）
-- `openSession` 是「切过去看」，连续调用只最后一个生效
-- 子代理极短命（创建即结束）时可能 `NO_SESSION`，静默跳过
+- 统计 5s 轮询（面板折叠后仍挂载，照跑）；数据文件很小，开销可忽略
+- 配置文件只有面板这一个写者（插件只读），无双写者冲突
+- 「整场放行」按会话 id 记录，写在同一份 `assistant.json` 的 `exemptSessions` 里
