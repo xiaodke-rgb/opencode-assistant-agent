@@ -59,6 +59,8 @@ const MSG = {
   terminal: () => `[assistant 守卫] 同类拦截已连续多次——立刻派 assistant 子代理，勿重试。`,
   storage: () =>
     `[assistant 守卫] 计数存储暂不可用，已暂停直查额度。请重试或改派 assistant 子代理。`,
+  subagentShell: (why) =>
+    `[assistant 守卫] ${why}：这条 shell 不会通过，不要换写法重试。改用 read / grep / rg / dbq 等只读工具，或把需求写进「缺」让主代理跑。`,
 }
 
 // ---------------------------------------------------------------- state / io
@@ -426,6 +428,23 @@ function classify(tool, input, mode) {
   return { cls: "reject", kind: "unknown", message: MSG.unknown(tool) }
 }
 
+// assistant 子代理 shell 的「必拒品类」轻判：与 assistant.md 的 deny 规则逐条对应——
+// ① 重定向 / 禁用旗标（子串匹配，语义等同原生 glob）；② 解释器 argv0（任何分段里都不允许）。
+// 只抓原生必然拒绝、且模型最爱换写法重试的形态；其余一律交给原生权限白名单。
+const SUBAGENT_DENY_SUBSTRS = [" >", "2>", "&>", ">>", "1>", "xxd -r", "--output", "ss -K", "--pre"]
+function assistantShellHardNo(cmd) {
+  const c = String(cmd ?? "")
+  if (!c.trim()) return ""
+  for (const s of SUBAGENT_DENY_SUBSTRS) {
+    if (c.includes(s)) return "重定向或禁用旗标（`" + s.trim() + "`）"
+  }
+  for (const seg of c.split(/[;&|]+/)) {
+    const argv0 = seg.trim().replace(/^command\s+/, "").replace(/^rtk\s+/, "").split(/\s+/)[0]
+    if (argv0 && INTERPRETERS.has(argv0.toLowerCase())) return "解释器命令（" + argv0 + "）"
+  }
+  return ""
+}
+
 // ---------------------------------------------------------------- tool hook
 async function onTool(event) {
   let controlled = false
@@ -451,13 +470,25 @@ async function onTool(event) {
       }
     }
 
-    // 判定优先级：event.agent 直接决定；自定义主 agent 按 plan 守；
-    // 子会话（assistant/general/未知且非已知主会话）放行。
+    // assistant 子代理的 shell：只做「必拒品类」轻判并给出可执行文案，
+    // 其余放行（仍由原生权限白名单兜底）。general 等其它子代理一律放行。
+    if (agent === "assistant") {
+      if (tool === "shell" || tool === "bash") {
+        const why = assistantShellHardNo(String(event?.input?.command ?? ""))
+        if (why) {
+          logEvent("reject", { sessionID: sid, agent, tool, reason: "subagent-shell", message: why })
+          throw guardError(MSG.subagentShell(why))
+        }
+      }
+      return
+    }
+    if (agent === "general") return
+
+    // 判定优先级：event.agent 直接决定；自定义主 agent 按 plan 守。
     let mode = null
     const r = S.sessions.get(sid)
     if (agent === "plan") mode = "full"
     else if (agent === "build") mode = "web"
-    else if (agent === "assistant" || agent === "general") mode = null
     else mode = r?.main ? "full" : null
     if (!mode) return
     controlled = true
