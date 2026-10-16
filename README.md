@@ -5,7 +5,7 @@ OpenCode「assistant 子代理」三件套：让主代理把查证类工作稳�
 | 目录 | 内容 | 状态 |
 | --- | --- | --- |
 | `plugin/` | OpenCode 插件（守卫）：分类拦截 + 额度 + 豁免 + 计数 | ✅ v0.1（已实测） |
-| `SKILL/` | OpenCode skill：教「何时派、怎么派、怎么收」 | 🚧 计划中 |
+| `SKILL/` | OpenCode skill：「assistant 派单工作流」 | ✅ 已落地（2026-10-16） |
 | `openchamber-extension/` | OpenChamber 扩展：派单联动（自动弹子会话）+ 设置面板 | 🚧 计划中 |
 
 ## plugin/assistant.ts
@@ -33,6 +33,7 @@ OpenCode「assistant 子代理」三件套：让主代理把查证类工作稳�
 ```sh
 cp plugin/assistant.ts ~/.config/opencode/plugins/
 cp plugin/assistant.json.example ~/.config/opencode/assistant.json   # 可选
+cp -r SKILL/assistant ~/.config/opencode/skills/                     # skill，id: assistant
 ```
 
 设计文档在本地：`assistant-suite-plan.md`。

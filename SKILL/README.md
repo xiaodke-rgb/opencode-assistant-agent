@@ -1,5 +1,12 @@
-# SKILL（计划中）
+# SKILL
 
-OpenCode skill（assistant 派单流程）：何时派 assistant、怎么给问题与已知范围、如何收结论、被守卫拦下时怎么改派、哪些不要做。
+OpenCode skill：assistant 派单工作流（何时派 / 怎么给范围 / 怎么收结论 / 被拦怎么办）。
 
-待插件稳定后补。
+安装（全局生效）：
+
+```sh
+mkdir -p ~/.config/opencode/skills
+cp -r assistant ~/.config/opencode/skills/
+```
+
+安装后 skill id 为 `assistant`（路径派生，大小写敏感），主代理在准备查证 / 派单时按需加载。
