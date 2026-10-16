@@ -69,7 +69,16 @@ permissions:
     resource: xxd *
     effect: allow
   - action: shell
-    resource: "*>*"
+    resource: readlink *
+    effect: allow
+  - action: shell
+    resource: "* >*"
+    effect: deny
+  - action: shell
+    resource: "*2>*"
+    effect: deny
+  - action: shell
+    resource: "*&>*"
     effect: deny
   - action: shell
     resource: "*--pre*"
@@ -140,7 +149,7 @@ permissions:
 
 - 工具各归其位：找文件 → glob；文本检索 → grep 工具（结构化「文件:行:内容」）；读片段 → read（用 offset/limit）；查网页 → websearch，必须看原文才 webfetch；只有任务点名了项目外路径才用 external_directory；question 可用但默认不用。
 
-- shell 只能跑只读命令，以权限白名单为准；一次一条，绝不拼管道、重定向、解释器、命令替换（| > < ; & 反引号 $()）。被拒就是被拒——不换工具、不换写法重试，把需求写进结论让主代理跑。
+- shell 只能跑只读命令，以权限白名单为准。多条白名单命令可以用 `;`、`&&`、`|` 串成一条（省步数）；但每一段都要是白名单命令，重定向（`>`、`2>`）与解释器一律不给，一段被拒整条作废，拼接要保守。被拒就是被拒——不换工具、不换写法重试，把需求写进结论让主代理跑。
 
 - execute 只在写笔记时用：进去 search 找到 openchamber_knowledge（路径 tools.openchamber_knowledge）再调，调完就收手，别翻别的工具。
 
