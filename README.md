@@ -6,7 +6,7 @@ OpenCode「assistant 子代理」三件套：让主代理把查证类工作稳�
 | --- | --- | --- |
 | `plugin/` | OpenCode 插件（守卫）：分类拦截 + 额度 + 豁免 + 计数 | ✅ v0.1（已实测） |
 | `SKILL/` | OpenCode skill：「assistant 派单工作流」 | ✅ 已落地（2026-10-16） |
-| `openchamber-extension/` | OpenChamber 扩展：派单联动（自动弹子会话）+ 设置面板 | 🚧 计划中 |
+| `openchamber-extension/` | OpenChamber 扩展：派单联动（自动弹子会话）+ 设置面板 | ✅ 已落地（2026-10-16） |
 
 ## plugin/assistant.ts
 
@@ -35,5 +35,18 @@ cp plugin/assistant.ts ~/.config/opencode/plugins/
 cp plugin/assistant.json.example ~/.config/opencode/assistant.json   # 可选
 cp -r SKILL/assistant ~/.config/opencode/skills/                     # skill，id: assistant
 ```
+
+## openchamber-extension/
+
+OpenChamber 扩展「assistant 守卫」（panel + service）：
+
+- **panel**：守卫统计一行（拦截 / 派单 / 豁免 + 最近一次拦截）、本会话子代理列表（点按跳转）、设置（总开关 / 联动开关 / 豁免词 / 每轮池 / 会话总额 / 豁免轮次上限 + 整场放行按钮）
+- **service**：读 OpenCode 库（`session_v2` 按 `parent_id`）秒级发现本会话新建子会话 → panel 自动 `openSession` 跳转（只跳第一个新鲜子会话；节流 20s；联动开关可关；`NO_SESSION` 静默跳过）
+- **statusSection**：「一键跳最新子代理」兜底入口
+- 已实测（2026-10-16）：子代理创建后约 0.4s 自动弹出并成功跳转（`auto.open` → `open.ok` → `session.changed`）
+
+安装：OpenChamber → 设置 → 扩展 →「添加」，粘贴本仓库 `openchamber-extension` 目录的本地路径，批准 `sessions` + `service` 两项能力。
+
+构建（产物已随仓库提交，重建才需要）：`node build.mjs`，依赖 esbuild（见目录内 README）。
 
 设计文档在本地：`assistant-suite-plan.md`。

@@ -1,0 +1,40 @@
+{
+  "name": "openchamber-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "assistant 三件套 · OpenChamber 扩展：派单联动（自动弹子代理会话）+ 设置 + 守卫统计",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@openchamber/sdk": "^2.2.0",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  },
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=2.0.0"
+    },
+    "contributes": {
+      "panel": {
+        "id": "assistant",
+        "name": "assistant 守卫",
+        "icon": "icon.svg",
+        "entry": "panel/index.html"
+      },
+      "statusSection": {
+        "entry": "status/index.html",
+        "title": "assistant 子代理",
+        "height": 104
+      },
+      "capabilities": ["sessions"],
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host"
+      },
+      "attach": false
+    }
+  }
+}

@@ -1,0 +1,35 @@
+:root {
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 12px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+#root {
+  padding: 6px 2px;
+}
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.sub {
+  font-size: 11px;
+  opacity: 0.65;
+}
+
+.btn {
+  margin-top: 2px;
+}
