@@ -6,7 +6,7 @@ OpenCode「assistant 子代理」三件套：让主代理把查证类工作稳�
 | --- | --- | --- |
 | `plugin/` | OpenCode 插件（守卫）：分类拦截 + 额度 + 豁免 + 计数 | ✅ v0.1（已实测） |
 | `SKILL/` | OpenCode skill：「assistant 派单工作流」 | ✅ 已落地（2026-10-16） |
-| `openchamber-extension/` | OpenChamber 扩展：设置面板 + 守卫统计 | ✅ v0.2（2026-10-16；联动暂缓，等上游） |
+| `openchamber-extension/` | OpenChamber 扩展：设置面板 + 守卫统计 | ✅ v0.2.1（2026-10-16；联动暂缓，等上游） |
 
 ## plugin/assistant.ts
 
