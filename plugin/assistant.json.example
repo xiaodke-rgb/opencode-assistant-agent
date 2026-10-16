@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "autoOpen": true,
+  "exemptionWord": "#nocap",
+  "poolPerRound": 3,
+  "sessionTotals": { "read": 30, "web": 10, "command": 12 },
+  "exemptionRoundCap": 5,
+  "exemptSessions": {}
+}
