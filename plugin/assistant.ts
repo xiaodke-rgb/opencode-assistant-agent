@@ -443,8 +443,8 @@ const SUBAGENT_OUTSIDERS = new Set([
   "tac", "sed", "awk", "gawk", "less", "more", "vi", "vim", "nano",
   // 包/系统查询（指向 dbq、read、写进缺）
   "dpkg", "apt", "apt-get", "npm", "npx", "pnpm", "yarn", "pip", "pip3", "uv", "sqlite3", "systemctl",
-  // 其余 shell 内建（echo/printf 等）
-  "command", "echo", "printf", "env", "printenv", "sleep", "source", "tee",
+  // 其余 shell 内建（printf 等）
+  "command", "printf", "env", "printenv", "sleep", "source", "tee",
   // 网络与写操作（指向"施工类由主代理做"）
   "curl", "wget", "rm", "mv", "cp", "mkdir", "touch", "chmod", "chown", "kill", "pkill", "dd", "sudo",
   // 能起子进程的检索工具

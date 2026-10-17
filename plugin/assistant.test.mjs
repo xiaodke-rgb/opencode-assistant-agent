@@ -36,6 +36,8 @@ test("放行：合法只读写法与无害重定向", () => {
     "uniq -f 2 /etc/hostname",
     "cut -d: -f1 /etc/passwd",
     "cat /etc/hostname | tr a-z A-Z",
+    "echo hi",
+    "echo ---; ls -la /tmp",
     "node --version",
     "node --version 2>/dev/null",
     "/usr/bin/node --version",
@@ -92,6 +94,7 @@ test("拦截：旗标 / 解释器 / 白名单外", () => {
     "sort --compress-program=sh /etc/hostname",
     "uniq /etc/hostname /tmp/x",
     "uniq -- /etc/hostname /tmp/x",
+    "printf x",
   ]) deny(c)
 })
 

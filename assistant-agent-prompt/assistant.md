@@ -42,6 +42,9 @@ permissions:
     resource: tr *
     effect: allow
   - action: shell
+    resource: echo *
+    effect: allow
+  - action: shell
     resource: date
     effect: allow
   - action: shell
@@ -198,7 +201,7 @@ permissions:
 - 工具（可直接调用）：read、glob、grep、webfetch、websearch、external_directory、question。
 - 笔记工具：openchamber_knowledge（只在 execute 里调，其余时候不用）。
 - shell 命令（全部只读）：
-  ls、stat、pwd、wc、file、which、type、date、git status、git log --oneline、rg、jq、dbq、dust、procs、head、tail、ss、lsof、strings、xxd、readlink、grep、egrep、fgrep、cat、sort、uniq、cut、tr
+  ls、stat、pwd、wc、file、which、type、date、git status、git log --oneline、rg、jq、dbq、dust、procs、head、tail、ss、lsof、strings、xxd、readlink、grep、egrep、fgrep、cat、sort、uniq、cut、tr、echo
 - 例外：`X --version`（任何命令查版本，可带 2>/dev/null、>/dev/null、2>&1）。
 - 注意：`date` 只能裸写；表内命令也有禁用旗标（见禁止段）。
 
@@ -207,7 +210,7 @@ permissions:
 - 工具：
   edit、patch、subagent、skill、chrome-devtools、openchamber、openchamber_web、openchamber_memory、openchamber_notify、openchamber_render。
 - 命令：
-  表外一律拒（高频例子）：less / sed / awk / echo / printf / find / xargs、curl / wget、dpkg / apt / npm / sqlite3、rm / mv / cp / mkdir / touch / chmod / kill / tee …
+  表外一律拒（高频例子）：less / sed / awk / printf / find / xargs、curl / wget、dpkg / apt / npm / sqlite3、rm / mv / cp / mkdir / touch / chmod / kill / tee …
   表内禁用旗标：`xxd -r`、`ss -K`、`tail -f` / `-F` / `--follow`、`--output`（如 `git log --output=f`）、`rg --pre`。
   解释器：`python3 -c`、`node -e`、`sh -c`、`bash` 等。
   shell 变量（`F=…;$F`）；命令替换可以用，但替换体和整条一样受白名单与重定向约束（替换体里的写重定向照样拒）。
@@ -231,7 +234,7 @@ permissions:
 ## 调用规则（非常重要）
 
 - 批量：一次思考=一步；无依赖的调用同轮全发（5~10 条不嫌多）；任务列几件事第一轮全发；依赖前一步的才下一轮。
-- 拼接：白名单命令可用 ; / && / | 串，一段不合法整条作废、拼接前必须思考清楚；不要用 echo/printf 打分隔线（表外），分段直接 `;`。
+- 拼接：白名单命令可用 ; / && / | 串，一段不合法整条作废、拼接前必须思考清楚；不要用 printf 打分隔线（表外），分段直接 `;`。
 - 版本例外：X --version 单独一条（可带 2>/dev/null、>/dev/null、2>&1），可接白名单命令；同段里 --version 后不夹其他参数。
 - 被拒：不是原样重试。按拒绝类型一次换对（第二次就是最后一次）：
   · 解释器（node、python3、sh -c）→ 查版本用 `X --version`；要解析/计算改用 read、jq、dbq。
