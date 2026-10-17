@@ -60,9 +60,9 @@ const MSG = {
   storage: () =>
     `[assistant 守卫] 计数存储暂不可用，已暂停直查额度。请重试或改派 assistant 子代理。`,
   subagentShell: (why) =>
-    `[assistant 守卫] ${why}：这条 shell 不会通过，不要换写法重试。改用 read / grep / rg / dbq 等只读工具，或把需求写进「缺」让主代理跑。`,
+    `[assistant 守卫] ${why}。按提示改一处后重发一次；再被拒就停，把需求写进「缺」让主代理跑。`,
   subagentShellOut: (name) =>
-    `[assistant 守卫] 只读白名单外命令（${name}）：不会通过，不要换写法重试。查证改用 read / grep 工具 / rg / jq / dbq；施工类由主代理在 build 做；拿不到就写进「缺」。`,
+    `[assistant 守卫] 白名单外命令（${name}）：改用 read / grep 工具 / rg / jq / dbq，或写进「缺」；施工类由主代理在 build 做。`,
 }
 
 // ---------------------------------------------------------------- state / io
@@ -430,11 +430,13 @@ function classify(tool, input, mode) {
   return { cls: "reject", kind: "unknown", message: MSG.unknown(tool) }
 }
 
-// assistant 子代理 shell 的「必拒品类」轻判：与 assistant.md 的 deny 规则逐条对应——
-// ① 重定向 / 禁用旗标（子串匹配，语义等同原生 glob）；② 解释器 argv0（任何分段里都不允许）；
-// ③ 只读白名单外的高频「探路」命令（argv0 判定，给指向性文案；原生同样会拒，这里只是把
-//    通用文案换成能解题的指引）。其余一律交给原生权限白名单。
-const SUBAGENT_DENY_SUBSTRS = [" >", "2>", "&>", ">>", "1>", "xxd -r", "--output", "ss -K", "--pre"]
+// assistant 子代理 shell 的「必拒品类」轻判：与 assistant.md 的规则对应——
+// ① 重定向：原生层已不再拦（5 条 redirect deny 下放到这里），由 scanRedirects 做引号感知扫描——
+//    引号内的 > 不算重定向；目标 /dev/null 或 fd 复制（>&1 / >&2 / >&-）放行；指向真实文件的
+//    一律拒（含不空格 `cmd>f`）。写文件是唯一要守的不变式。
+// ② 禁用旗标：子串匹配（xxd -r / --output / ss -K / tail -f）；--pre 走边界匹配，免得误伤 --pretty。
+// ③ 解释器 argv0 与白名单外高频「探路」命令（给指向性文案）。其余交给原生白名单。
+const SUBAGENT_FLAG_DENIES = ["xxd -r", "--output", "ss -K", "tail -f"]
 const SUBAGENT_OUTSIDERS = new Set([
   // 检索/读（指向 rg、read、grep 工具）
   "grep", "egrep", "fgrep", "cat", "tac", "sed", "awk", "gawk", "less", "more", "vi", "vim", "nano",
@@ -445,19 +447,89 @@ const SUBAGENT_OUTSIDERS = new Set([
   // 网络与写操作（指向"施工类由主代理做"）
   "curl", "wget", "rm", "mv", "cp", "mkdir", "touch", "chmod", "chown", "kill", "pkill", "dd", "sudo",
 ])
+
+// 引号感知：找出未加引号的 `>` 重定向；/dev/null 与 fd 复制放行，指向真实文件即写盘。
+function scanRedirects(cmd) {
+  let quote = null
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]
+    if (quote) {
+      if (ch === "\\" && quote === '"') { i++; continue }
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "\\") { i++; continue }
+    if (ch === '"' || ch === "'") { quote = ch; continue }
+    if (ch !== ">") continue
+    let j = i + 1
+    if (cmd[j] === ">") j++
+    if (cmd[j] === "&") {
+      // fd 复制：2>&1 / >&2 / >&-，不写文件
+      j++
+      while (j < cmd.length && /[0-9-]/.test(cmd[j])) j++
+      i = j - 1
+      continue
+    }
+    while (j < cmd.length && /\s/.test(cmd[j])) j++ // `> file` 允许空格
+    let tgt = ""
+    while (j < cmd.length) {
+      const c = cmd[j]
+      if (/\s/.test(c) || ";|&<>".includes(c)) break
+      if (c === '"' || c === "'") {
+        const q2 = c
+        j++
+        while (j < cmd.length && cmd[j] !== q2) { tgt += cmd[j]; j++ }
+        j++
+        continue
+      }
+      tgt += c
+      j++
+    }
+    if (tgt === "/dev/null") { i = j - 1; continue }
+    return tgt ? "写文件的重定向（`> " + tgt + "`）" : "重定向缺目标（`>`）"
+  }
+  return null
+}
+
+// 引号感知地按 ; & | 换行拆段（引号里的分隔符不算）。
+function shellSegments(cmd) {
+  const out = []
+  let cur = ""
+  let quote = null
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]
+    if (quote) {
+      cur += ch
+      if (ch === "\\" && quote === '"' && i + 1 < cmd.length) { cur += cmd[++i]; continue }
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "\\") { cur += ch; if (i + 1 < cmd.length) cur += cmd[++i]; continue }
+    if (ch === '"' || ch === "'") { quote = ch; cur += ch; continue }
+    if (";&|\n".includes(ch)) { out.push(cur); cur = ""; continue }
+    cur += ch
+  }
+  out.push(cur)
+  return out.map((s) => s.trim()).filter(Boolean)
+}
+
 function assistantShellHardNo(cmd) {
   const c = String(cmd ?? "")
   if (!c.trim()) return null
-  for (const s of SUBAGENT_DENY_SUBSTRS) {
-    if (c.includes(s)) return { why: "重定向或禁用旗标（`" + s.trim() + "`）", out: false }
+  const redirect = scanRedirects(c)
+  if (redirect) return { why: redirect, out: false }
+  for (const f of SUBAGENT_FLAG_DENIES) {
+    if (c.includes(f)) return { why: "禁用旗标（`" + f + "`）", out: false }
   }
-  for (const seg of c.replace(/^command\s+(?!-)/, "").split(/[;&|]+/)) {
-    const argv0 = seg.trim().replace(/^rtk\s+/, "").split(/\s+/)[0]
+  if (/--pre(=|\s)/.test(c)) return { why: "禁用旗标（`--pre`）", out: false }
+  for (const seg of shellSegments(c)) {
+    const s = seg.replace(/^command\s+(?!-)/, "")
+    const argv0 = s.replace(/^rtk\s+/, "").split(/\s+/)[0]
     if (!argv0) continue
     const a = argv0.toLowerCase()
     if (INTERPRETERS.has(a)) return { why: "解释器命令（" + argv0 + "）", out: false }
     if (a === "git") {
-      if (!/^git\s+(status|log)(\s|$)/.test(seg.trim())) return { why: "git " + (seg.trim().split(/\s+/)[1] || ""), out: true }
+      if (!/^git\s+(status|log)(\s|$)/.test(s)) return { why: "git " + (s.split(/\s+/)[1] || ""), out: true }
       continue
     }
     if (SUBAGENT_OUTSIDERS.has(a)) return { why: argv0, out: true }
