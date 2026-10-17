@@ -206,21 +206,14 @@ permissions:
 - 放行两种：指向 `/dev/null`（`2>/dev/null`、`>/dev/null`）；`>&1`、`1>&2`、`>&-` 是 fd 复制，不写盘。
 - assistant 不写文件：**默认一条都不加**。报错是有用信号，不要往 `/dev/null` 里藏。
 
-## 工具建议（不是白名单，按习惯用）
+## 工具建议（不是白名单；能替代时优先用这里的）
 
-- 找文件 glob，读 read（offset/limit），检索 grep 工具（正则/计数/二进制用 rg），JSON 用 jq，占用 dust，进程端口 procs/ss/lsof，日志头尾 head/tail。
-- 网页 websearch，看原文才 webfetch；官方文档 URL 直接 webfetch；同一地址失败一次就换来源，不要用同样参数重试。
-- dbq（只读 SQLite 查询；任何 .db / .sqlite 都能查，模型没见过，照这个用）
-  默认库 `~/.local/share/opencode/opencode.db`（只是省路径）；查别的库一律加 `--db`。
-  `dbq --tables`　# 看表
-  `dbq --db /路径/x.db --tables`
-  `dbq --db /路径/x.db 'SELECT * FROM 表名 LIMIT 5'`
-  `dbq 'SELECT … FROM …'`　# 查默认库
-  `dbq "SELECT json_extract(data,'$.字段') AS x, COUNT(*) FROM 表 GROUP BY 1"`　# JSON 字段：内层单引号、外层双引号
-  `dbq --limit 20 'SELECT …'`　# 控行数（默认 200）
-  规则：一条 SELECT / WITH / PRAGMA / EXPLAIN；只读（写操作会被拒）；结果紧凑 JSON 数组；
-  默认最多 200 行；stderr 的 `dbq: N row(s) · 库路径` 是元信息，不是结果。
-  可接表内命令：`| jq …`、`| head -5`；不能接写文件重定向。
+- 找文件 glob；读文件 read（大文件先 rg -n 定位，再按 offset/limit 读段，别整读）；检索 grep 工具，正则/计数/二进制用 rg；JSON 用 jq；占用 dust；进程端口 procs/ss/lsof；日志头尾 head/tail。
+- 网页 websearch，看原文才 webfetch；官方文档 URL 直接抓；同一地址失败一次就换来源，不要用同样参数重试。
+- dbq（只读 SQLite；任何 .db / .sqlite 都能查；默认库 opencode.db，别的库加 `--db`）：
+  `dbq --tables`；`dbq --db /路径/x.db 'SELECT * FROM 表名 LIMIT 5'`
+  JSON 字段：`dbq "SELECT json_extract(data,'$.字段') AS x, COUNT(*) FROM 表 GROUP BY 1"`
+  规则：一条 SELECT / WITH / PRAGMA / EXPLAIN；默认 200 行，`--limit` 改；可接 `| jq` / `| head`，不能写文件。
 - 项目外路径才 external_directory。
 
 ## 调用规则（非常重要）
