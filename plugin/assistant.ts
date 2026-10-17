@@ -610,6 +610,27 @@ function assistantShellHardNo(cmd) {
       if (args.some((t) => t === "--follow" || /^-[^-]*[fF]/.test(t)))
         return { why: "tail -f / --follow（日志用 `tail -n 50`）", out: false }
     }
+    if (a === "sort") {
+      const args = s.split(/\s+/).slice(1)
+      // -o 写输出文件；--compress-program 起子进程（含 o 的短旗标一并拒）
+      if (args.some((t) => /^-[^-]*o/.test(t) || t === "--compress-program" || t.startsWith("--compress-program=")))
+        return { why: "sort 的 -o / --compress-program（会写文件或起子进程）", out: false }
+    }
+    if (a === "uniq") {
+      const args = s.split(/\s+/).slice(1)
+      const pos: string[] = []
+      for (let i = 0; i < args.length; i++) {
+        const t = args[i]
+        if (t === "--") { pos.push(...args.slice(i + 1)); break }
+        if (t.startsWith("-") && t !== "-") {
+          if (["-f", "-s", "-w", "--skip-fields", "--skip-chars", "--check-chars"].includes(t)) i++
+          continue
+        }
+        pos.push(t)
+      }
+      // uniq [INPUT [OUTPUT]]：第二个位置参数是输出文件
+      if (pos.length >= 2) return { why: "uniq 的第二个位置参数是输出文件（用管道）", out: false }
+    }
     if (SUBAGENT_OUTSIDERS.has(a)) return { why: argv0, out: true }
     if (a === "git") {
       if (!/^git\s+(status|log)(\s|$)/.test(s)) return { why: "git " + (s.split(/\s+/)[1] || ""), out: true }

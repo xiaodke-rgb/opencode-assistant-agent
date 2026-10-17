@@ -30,6 +30,12 @@ test("放行：合法只读写法与无害重定向", () => {
     "type -a dsh",
     "type -p dsh; which dsh",
     "which dsh; ls -la $(which dsh) 2>/dev/null; readlink -f $(which dsh) 2>/dev/null",
+    "sort -u /etc/hostname",
+    "rg -o foo /etc/hostname | sort -u | head",
+    "uniq -c /etc/hostname",
+    "uniq -f 2 /etc/hostname",
+    "cut -d: -f1 /etc/passwd",
+    "cat /etc/hostname | tr a-z A-Z",
     "node --version",
     "node --version 2>/dev/null",
     "/usr/bin/node --version",
@@ -81,6 +87,11 @@ test("拦截：旗标 / 解释器 / 白名单外", () => {
     "node --version > /tmp/opencode/x",
     "date; node --version --foo",
     "$(rm>/tmp/x) --version",
+    "sort -o /tmp/x /etc/hostname",
+    "sort -uo /tmp/x /etc/hostname",
+    "sort --compress-program=sh /etc/hostname",
+    "uniq /etc/hostname /tmp/x",
+    "uniq -- /etc/hostname /tmp/x",
   ]) deny(c)
 })
 

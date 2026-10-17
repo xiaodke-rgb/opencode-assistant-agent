@@ -30,6 +30,18 @@ permissions:
     resource: type *
     effect: allow
   - action: shell
+    resource: sort *
+    effect: allow
+  - action: shell
+    resource: uniq *
+    effect: allow
+  - action: shell
+    resource: cut *
+    effect: allow
+  - action: shell
+    resource: tr *
+    effect: allow
+  - action: shell
     resource: date
     effect: allow
   - action: shell
@@ -186,7 +198,7 @@ permissions:
 - 工具（可直接调用）：read、glob、grep、webfetch、websearch、external_directory、question。
 - 笔记工具：openchamber_knowledge（只在 execute 里调，其余时候不用）。
 - shell 命令（全部只读）：
-  ls、stat、pwd、wc、file、which、type、date、git status、git log --oneline、rg、jq、dbq、dust、procs、head、tail、ss、lsof、strings、xxd、readlink、grep、egrep、fgrep、cat
+  ls、stat、pwd、wc、file、which、type、date、git status、git log --oneline、rg、jq、dbq、dust、procs、head、tail、ss、lsof、strings、xxd、readlink、grep、egrep、fgrep、cat、sort、uniq、cut、tr
 - 例外：`X --version`（任何命令查版本，可带 2>/dev/null、>/dev/null、2>&1）。
 - 注意：`date` 只能裸写；表内命令也有禁用旗标（见禁止段）。
 
