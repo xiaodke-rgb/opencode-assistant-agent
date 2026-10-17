@@ -109,6 +109,8 @@ function rec(sid) {
       lastReject: null, // { tool, reason, at }
       sandboxRejects: 0, // assistant 沙箱拦截（记到子代理的父会话）
       lastSandboxReject: null, // { tool, reason, at }
+      recentRejects: [], // 最近几条直查拦截（面板日志框，最多 RECENT_KEEP 条）
+      recentSandboxRejects: [], // 最近几条沙箱拦截
       loaded: false,
       loading: null,
       storageOK: true,
@@ -134,6 +136,8 @@ async function ensureLoaded(r) {
         if (Number.isFinite(data.sandboxRejects)) r.sandboxRejects = Math.max(r.sandboxRejects, data.sandboxRejects)
         r.lastReject = pickNewest(data.lastReject, r.lastReject)
         r.lastSandboxReject = pickNewest(data.lastSandboxReject, r.lastSandboxReject)
+        r.recentRejects = mergeRecent(r.recentRejects, data.recentRejects)
+        r.recentSandboxRejects = mergeRecent(r.recentSandboxRejects, data.recentSandboxRejects)
         if (data.main) r.main = true
       }
       r.storageOK = true
@@ -177,6 +181,8 @@ function persist(r) {
         sandboxRejects: Math.max(numOr(p.sandboxRejects, 0), numOr(r.sandboxRejects, 0)),
         lastReject: pickNewest(p.lastReject, r.lastReject),
         lastSandboxReject: pickNewest(p.lastSandboxReject, r.lastSandboxReject),
+        recentRejects: mergeRecent(r.recentRejects, p.recentRejects),
+        recentSandboxRejects: mergeRecent(r.recentSandboxRejects, p.recentSandboxRejects),
         main: !!(p.main || r.main),
         updatedAt: Date.now(),
       })
@@ -211,6 +217,27 @@ function pickNewest(a, b) {
   return numOr(y.at, 0) >= numOr(x.at, 0) ? y : x
 }
 
+const RECENT_KEEP = 5
+
+/** 合并「最近拦截」小列表：按时间倒序、去重、只留最近几条（面板日志框用）。 */
+function mergeRecent(a, b) {
+  const seen = new Set()
+  const out = []
+  for (const it of [...(Array.isArray(b) ? b : []), ...(Array.isArray(a) ? a : [])]) {
+    if (!it || typeof it !== "object") continue
+    const at = numOr(it.at, 0)
+    if (!at) continue
+    const tool = String(it.tool ?? "").slice(0, 80)
+    const reason = String(it.reason ?? "").slice(0, 40)
+    const key = `${at}|${tool}|${reason}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ tool, reason, at })
+  }
+  out.sort((x, y) => y.at - x.at)
+  return out.slice(0, RECENT_KEEP)
+}
+
 // 计数落盘：多个插件实例各持一份快照整份写回，会互相把新值盖成旧值（面板看到
 // "数字冻结/回退"）。现在每次落盘前重读文件，按会话做单调合并——计数取 max、
 // 派单按子会话 id 并集、最近拦截取更新的一条——旧快照再也盖不掉新值。
@@ -241,6 +268,8 @@ function mergeSession(fileRec, mine) {
     used,
     lastReject: lr ? { tool: lr.tool, reason: lr.reason, at: numOr(lr.at, 0) } : null,
     lastSandboxReject: sb ? { tool: sb.tool, reason: sb.reason, at: numOr(sb.at, 0) } : null,
+    recentRejects: mergeRecent(a.recentRejects, mine.recentRejects),
+    recentSandboxRejects: mergeRecent(a.recentSandboxRejects, mine.recentSandboxRejects),
     updatedAt: Date.now(),
   }
 }
@@ -286,6 +315,8 @@ async function flushCounts() {
         used: r.counts,
         lastReject: r.lastReject,
         lastSandboxReject: r.lastSandboxReject,
+        recentRejects: r.recentRejects,
+        recentSandboxRejects: r.recentSandboxRejects,
       })
     }
     const entries = Object.entries(sessions)
@@ -791,7 +822,8 @@ async function noteSandboxReject(sid, reason, why) {
     const target = pid ? rec(pid) : rec(sid)
     await ensureLoaded(target)
     target.sandboxRejects = numOr(target.sandboxRejects, 0) + 1
-    target.lastSandboxReject = { tool: reason, reason, at: Date.now() }
+    target.lastSandboxReject = { tool: "", reason, at: Date.now() }
+    target.recentSandboxRejects = mergeRecent(target.recentSandboxRejects, [target.lastSandboxReject])
     touchSession(target)
     persist(target)
     logEvent("reject", { sessionID: sid, parentID: pid || undefined, agent: "assistant", reason, message: why })
@@ -939,6 +971,7 @@ async function onTool(event) {
 function rejectLog(r, tool, agent, kind, message) {
   r.rejected = numOr(r.rejected, 0) + 1
   r.lastReject = { tool, reason: kind, at: Date.now() }
+  r.recentRejects = mergeRecent(r.recentRejects, [r.lastReject])
   touchSession(r)
   // 字段名不能叫 kind，否则会覆盖 logEvent 的事件类型
   logEvent("reject", { sessionID: r.sid, agent, tool, reason: kind, message })

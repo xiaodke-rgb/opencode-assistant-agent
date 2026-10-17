@@ -1,11 +1,12 @@
 /**
  * assistant 面板（纯设置 + 统计）
  *
- * - 头顶三行：本会话直查统计（直查拦截 / 派单 / 豁免）、沙箱状态与拦截、
- *   本会话直查余额（读/网/命令剩余 · 豁免剩余），数据来自插件写的
+ * - 头顶：本会话一行状态（直查拦截 / 派单 / 豁免 · 沙箱状态 + 时间），
+ *   下面「插件拦截」「沙箱拦截」两个日志框（各最近 3 条）
+ * - 小节：直查余额（读/网/命令剩余 · 豁免剩余）、assistant 沙箱（总开关）、
+ *   直查额度设置（plan 计读/网/命令，build 只计网；豁免词 / 每轮直查额度 /
+ *   会话总额（读·网·命令）/ 豁免轮次上限 + 本会话「整场放行」），数据来自插件写的
  *   `~/.config/opencode/assistant-counts.json`（v2：按会话分片 + sandbox 状态）
- * - 设置分两块：assistant 沙箱（总开关）；直查额度（plan 计读/网/命令，build 只计网；豁免词 / 每轮直查额度 /
- *   会话总额（读·网·命令）/ 豁免轮次上限 + 本会话「整场放行」）
  *   ——全部直接读写 `~/.config/opencode/assistant.json`
  * - 无后台服务、无联动、无子代理列表：面板只用宿主的文件能力（filesystem）
  *
@@ -50,6 +51,8 @@ type SessionStats = {
   updatedAt: number;
   lastReject: RejectRec | null;
   lastSandboxReject: RejectRec | null;
+  recentRejects: RejectRec[];
+  recentSandboxRejects: RejectRec[];
 };
 type SandboxState = { ok?: boolean; at?: number };
 type CountsFile = {
@@ -158,7 +161,8 @@ function normalizeConfig(raw: unknown): Config {
 // ---------------------------------------------------------------------------
 
 let statsEl!: HTMLElement;
-let sandboxEl!: HTMLElement;
+let rejectBoxEl!: HTMLElement;
+let sandboxBoxEl!: HTMLElement;
 let balanceEl!: HTMLElement;
 let saveStateEl!: HTMLElement;
 let exemptNoteEl: HTMLElement | null = null;
@@ -199,18 +203,31 @@ function buildDom(): void {
   const hd = el('div', 'hd');
   hd.append(el('h1', '', 'assistant 守卫'));
   statsEl = el('div', 'stats muted', '本会话：统计加载中…');
-  sandboxEl = el('div', 'stats muted', '沙箱：状态未知');
-  balanceEl = el('div', 'stats muted', '');
-  hd.append(statsEl, sandboxEl, balanceEl);
+  hd.append(statsEl);
   root.append(hd);
 
   bannerWrap = el('div');
   root.append(bannerWrap);
 
+  const logs = el('div', 'logs');
+  logs.append(el('div', 'log-label', '插件拦截'));
+  rejectBoxEl = el('div', 'log-box muted', '暂无');
+  logs.append(rejectBoxEl);
+  logs.append(el('div', 'log-label', '沙箱拦截'));
+  sandboxBoxEl = el('div', 'log-box muted', '暂无');
+  logs.append(sandboxBoxEl);
+  root.append(logs);
+
+  const balanceSec = el('div', 'section');
+  balanceSec.append(el('div', 'section-title', '直查余额'));
+  balanceEl = el('div', 'stats muted', '');
+  balanceSec.append(balanceEl);
+  root.append(balanceSec);
+
   const sandboxSec = el('div', 'section');
   sandboxSec.append(
     el('div', 'section-title', 'assistant 沙箱'),
-    el('div', 'muted', '只影响 assistant 子代理的 shell；总开关关掉后沙箱仍生效。'),
+    el('div', 'muted', '只影响 assistant 子代理的 shell；开关关掉后 plan / build 直查不再拦截，沙箱仍生效。'),
   );
   const sbWrap = el('div', 'settings');
   buildSandboxSettings(sbWrap);
@@ -219,7 +236,7 @@ function buildDom(): void {
 
   const quotaSec = el('div', 'section');
   quotaSec.append(
-    el('div', 'section-title', '直查额度'),
+    el('div', 'section-title', '直查额度设置'),
     el('div', 'muted', 'plan 计读 / 网 / 命令；build 只计网，read / glob / shell 放行不计数。'),
     el('div', 'muted', `改完点保存，写入 ${CONFIG_PATH}；插件每轮重读。`),
   );
@@ -237,11 +254,11 @@ function markDirty(): void {
 
 function buildSandboxSettings(wrap: HTMLElement): void {
   swEnabled = mountSwitch(wrap, {
-    label: '插件总开关',
-    description: '关掉后 plan / build 直查不再拦截；assistant 只读沙箱始终生效',
+    label: '总开关',
     checked: true,
     onChange: (v) => {
       if (draft) draft.enabled = v;
+      swEnabled?.update({ checked: v });
       markDirty();
     },
   });
@@ -330,16 +347,27 @@ function buildQuotaSettings(wrap: HTMLElement): void {
 // 渲染
 // ---------------------------------------------------------------------------
 
-function rejectText(lr: RejectRec): string {
+function logRow(lr: RejectRec): string {
   const raw = (lr.tool ?? '').trim();
   const label = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : '';
   // 只显示短工具名；旧记录里可能是整段提示词，宁可不显示。
   const tool = raw.length <= 24 && raw !== (lr.reason ?? '') ? raw : '';
-  const head = tool && label ? `${tool}（${label}）` : tool || label;
-  return `${head} ${fmtTime(lr.at ?? 0)}`.trim();
+  return [fmtTime(lr.at ?? 0), tool, label].filter(Boolean).join(' · ');
 }
 
-/** 上两行看本会话（直查拦截 + 沙箱拦截），末行是本会话直查余额。 */
+function renderLogBox(box: HTMLElement | undefined, items: RejectRec[], fallback: RejectRec | null): void {
+  if (!box) return;
+  const list = items.length ? items : fallback ? [fallback] : [];
+  box.textContent = '';
+  box.classList.toggle('muted', !list.length);
+  if (!list.length) {
+    box.textContent = '暂无';
+    return;
+  }
+  for (const it of list.slice(0, 3)) box.append(el('div', 'log-row', logRow(it)));
+}
+
+/** 头部一行本会话状态；两个日志框各取最近 3 条；余额单独一节。 */
 function renderStats(
   sessions: Record<string, SessionStats> | null,
   sandbox: SandboxState | null,
@@ -350,28 +378,21 @@ function renderStats(
   const rejected = s?.rejected ?? 0;
   const dispatched = s?.dispatched ?? 0;
   const exempted = s?.exempted ?? 0;
-  const lr = s?.lastReject ?? null;
 
-  let text = sessionId ? `本会话：直查拦截 ${rejected} · 派单 ${dispatched} · 豁免 ${exempted}` : '本会话：未绑定会话';
-  if (lr) text += ` · 最近 ${rejectText(lr)}`;
-  statsEl.textContent = text;
+  const state = sandbox ? (sandbox.ok ? '正常' : '不可用') : '未知';
+  const at = sandbox?.at ? ` ${fmtTime(sandbox.at)}` : '';
+  statsEl.textContent = sessionId
+    ? `本会话：直查拦截 ${rejected} · 派单 ${dispatched} · 豁免 ${exempted} · 沙箱：${state}${at}`
+    : '本会话：未绑定会话';
 
-  if (sandboxEl) {
-    const sbRejected = s?.sandboxRejects ?? 0;
-    const sbLast = s?.lastSandboxReject ?? null;
-    const state = sandbox ? (sandbox.ok ? '正常' : '不可用') : '未知';
-    let sb = `沙箱：${state}`;
-    if (sandbox?.at) sb += ` ${fmtTime(sandbox.at)}`;
-    sb += ` · 拦截 ${sbRejected}`;
-    if (sbLast) sb += ` · 最近 ${rejectText(sbLast)}`;
-    sandboxEl.textContent = sb;
-  }
+  renderLogBox(rejectBoxEl, s?.recentRejects ?? [], s?.lastReject ?? null);
+  renderLogBox(sandboxBoxEl, s?.recentSandboxRejects ?? [], s?.lastSandboxReject ?? null);
 
   if (!balanceEl) return;
   const used = s?.used ?? { read: 0, web: 0, command: 0 };
   const rem = (total: number, u: number): string => `${Math.max(0, total - u)}/${total}`;
   balanceEl.textContent =
-    `直查余额：读 ${rem(cfg.sessionTotals.read, used.read)}` +
+    `读 ${rem(cfg.sessionTotals.read, used.read)}` +
     ` · 网 ${rem(cfg.sessionTotals.web, used.web)}` +
     ` · 命令 ${rem(cfg.sessionTotals.command, used.command)}` +
     ` · 豁免 ${rem(cfg.exemptionRoundCap, exempted)}`;
@@ -467,6 +488,16 @@ function normReject(raw: unknown): RejectRec | null {
   };
 }
 
+function normRecent(raw: unknown): RejectRec[] {
+  if (!Array.isArray(raw)) return [];
+  const out: RejectRec[] = [];
+  for (const it of raw) {
+    const r = normReject(it);
+    if (r) out.push(r);
+  }
+  return out.slice(0, 5);
+}
+
 function normalizeSessionStats(raw: unknown): SessionStats {
   const r = (raw ?? {}) as Record<string, unknown>;
   const used = (r.used ?? {}) as Record<string, unknown>;
@@ -483,6 +514,8 @@ function normalizeSessionStats(raw: unknown): SessionStats {
     updatedAt: intOr(r.updatedAt, 0),
     lastReject: normReject(r.lastReject),
     lastSandboxReject: normReject(r.lastSandboxReject),
+    recentRejects: normRecent(r.recentRejects),
+    recentSandboxRejects: normRecent(r.recentSandboxRejects),
   };
 }
 

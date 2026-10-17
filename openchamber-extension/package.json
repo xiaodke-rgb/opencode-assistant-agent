@@ -1,6 +1,6 @@
 {
   "name": "openchamber-assistant",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "assistant 三件套 · OpenChamber 扩展：设置 + 守卫统计（面板直读配置文件，无后台服务）",
   "scripts": {

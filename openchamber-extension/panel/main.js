@@ -2026,7 +2026,8 @@ ${GUEST_UI_LOOK_CSS}`;
     };
   }
   var statsEl;
-  var sandboxEl;
+  var rejectBoxEl;
+  var sandboxBoxEl;
   var balanceEl;
   var saveStateEl;
   var exemptNoteEl = null;
@@ -2062,16 +2063,27 @@ ${GUEST_UI_LOOK_CSS}`;
     const hd = el2("div", "hd");
     hd.append(el2("h1", "", "assistant \u5B88\u536B"));
     statsEl = el2("div", "stats muted", "\u672C\u4F1A\u8BDD\uFF1A\u7EDF\u8BA1\u52A0\u8F7D\u4E2D\u2026");
-    sandboxEl = el2("div", "stats muted", "\u6C99\u7BB1\uFF1A\u72B6\u6001\u672A\u77E5");
-    balanceEl = el2("div", "stats muted", "");
-    hd.append(statsEl, sandboxEl, balanceEl);
+    hd.append(statsEl);
     root.append(hd);
     bannerWrap = el2("div");
     root.append(bannerWrap);
+    const logs = el2("div", "logs");
+    logs.append(el2("div", "log-label", "\u63D2\u4EF6\u62E6\u622A"));
+    rejectBoxEl = el2("div", "log-box muted", "\u6682\u65E0");
+    logs.append(rejectBoxEl);
+    logs.append(el2("div", "log-label", "\u6C99\u7BB1\u62E6\u622A"));
+    sandboxBoxEl = el2("div", "log-box muted", "\u6682\u65E0");
+    logs.append(sandboxBoxEl);
+    root.append(logs);
+    const balanceSec = el2("div", "section");
+    balanceSec.append(el2("div", "section-title", "\u76F4\u67E5\u4F59\u989D"));
+    balanceEl = el2("div", "stats muted", "");
+    balanceSec.append(balanceEl);
+    root.append(balanceSec);
     const sandboxSec = el2("div", "section");
     sandboxSec.append(
       el2("div", "section-title", "assistant \u6C99\u7BB1"),
-      el2("div", "muted", "\u53EA\u5F71\u54CD assistant \u5B50\u4EE3\u7406\u7684 shell\uFF1B\u603B\u5F00\u5173\u5173\u6389\u540E\u6C99\u7BB1\u4ECD\u751F\u6548\u3002")
+      el2("div", "muted", "\u53EA\u5F71\u54CD assistant \u5B50\u4EE3\u7406\u7684 shell\uFF1B\u5F00\u5173\u5173\u6389\u540E plan / build \u76F4\u67E5\u4E0D\u518D\u62E6\u622A\uFF0C\u6C99\u7BB1\u4ECD\u751F\u6548\u3002")
     );
     const sbWrap = el2("div", "settings");
     buildSandboxSettings(sbWrap);
@@ -2079,7 +2091,7 @@ ${GUEST_UI_LOOK_CSS}`;
     root.append(sandboxSec);
     const quotaSec = el2("div", "section");
     quotaSec.append(
-      el2("div", "section-title", "\u76F4\u67E5\u989D\u5EA6"),
+      el2("div", "section-title", "\u76F4\u67E5\u989D\u5EA6\u8BBE\u7F6E"),
       el2("div", "muted", "plan \u8BA1\u8BFB / \u7F51 / \u547D\u4EE4\uFF1Bbuild \u53EA\u8BA1\u7F51\uFF0Cread / glob / shell \u653E\u884C\u4E0D\u8BA1\u6570\u3002"),
       el2("div", "muted", `\u6539\u5B8C\u70B9\u4FDD\u5B58\uFF0C\u5199\u5165 ${CONFIG_PATH}\uFF1B\u63D2\u4EF6\u6BCF\u8F6E\u91CD\u8BFB\u3002`)
     );
@@ -2095,11 +2107,11 @@ ${GUEST_UI_LOOK_CSS}`;
   }
   function buildSandboxSettings(wrap) {
     swEnabled = mountSwitch(wrap, {
-      label: "\u63D2\u4EF6\u603B\u5F00\u5173",
-      description: "\u5173\u6389\u540E plan / build \u76F4\u67E5\u4E0D\u518D\u62E6\u622A\uFF1Bassistant \u53EA\u8BFB\u6C99\u7BB1\u59CB\u7EC8\u751F\u6548",
+      label: "\u603B\u5F00\u5173",
       checked: true,
       onChange: (v2) => {
         if (draft) draft.enabled = v2;
+        swEnabled?.update({ checked: v2 });
         markDirty();
       }
     });
@@ -2175,12 +2187,22 @@ ${GUEST_UI_LOOK_CSS}`;
     exemptNoteEl = el2("div", "muted", "");
     wrap.append(exemptNoteEl);
   }
-  function rejectText(lr) {
+  function logRow(lr) {
     const raw = (lr.tool ?? "").trim();
     const label = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : "";
     const tool = raw.length <= 24 && raw !== (lr.reason ?? "") ? raw : "";
-    const head = tool && label ? `${tool}\uFF08${label}\uFF09` : tool || label;
-    return `${head} ${fmtTime(lr.at ?? 0)}`.trim();
+    return [fmtTime(lr.at ?? 0), tool, label].filter(Boolean).join(" \xB7 ");
+  }
+  function renderLogBox(box, items, fallback) {
+    if (!box) return;
+    const list = items.length ? items : fallback ? [fallback] : [];
+    box.textContent = "";
+    box.classList.toggle("muted", !list.length);
+    if (!list.length) {
+      box.textContent = "\u6682\u65E0";
+      return;
+    }
+    for (const it of list.slice(0, 3)) box.append(el2("div", "log-row", logRow(it)));
   }
   function renderStats(sessions, sandbox, cfg) {
     if (!statsEl) return;
@@ -2188,24 +2210,15 @@ ${GUEST_UI_LOOK_CSS}`;
     const rejected = s?.rejected ?? 0;
     const dispatched = s?.dispatched ?? 0;
     const exempted = s?.exempted ?? 0;
-    const lr = s?.lastReject ?? null;
-    let text = sessionId ? `\u672C\u4F1A\u8BDD\uFF1A\u76F4\u67E5\u62E6\u622A ${rejected} \xB7 \u6D3E\u5355 ${dispatched} \xB7 \u8C41\u514D ${exempted}` : "\u672C\u4F1A\u8BDD\uFF1A\u672A\u7ED1\u5B9A\u4F1A\u8BDD";
-    if (lr) text += ` \xB7 \u6700\u8FD1 ${rejectText(lr)}`;
-    statsEl.textContent = text;
-    if (sandboxEl) {
-      const sbRejected = s?.sandboxRejects ?? 0;
-      const sbLast = s?.lastSandboxReject ?? null;
-      const state = sandbox ? sandbox.ok ? "\u6B63\u5E38" : "\u4E0D\u53EF\u7528" : "\u672A\u77E5";
-      let sb = `\u6C99\u7BB1\uFF1A${state}`;
-      if (sandbox?.at) sb += ` ${fmtTime(sandbox.at)}`;
-      sb += ` \xB7 \u62E6\u622A ${sbRejected}`;
-      if (sbLast) sb += ` \xB7 \u6700\u8FD1 ${rejectText(sbLast)}`;
-      sandboxEl.textContent = sb;
-    }
+    const state = sandbox ? sandbox.ok ? "\u6B63\u5E38" : "\u4E0D\u53EF\u7528" : "\u672A\u77E5";
+    const at = sandbox?.at ? ` ${fmtTime(sandbox.at)}` : "";
+    statsEl.textContent = sessionId ? `\u672C\u4F1A\u8BDD\uFF1A\u76F4\u67E5\u62E6\u622A ${rejected} \xB7 \u6D3E\u5355 ${dispatched} \xB7 \u8C41\u514D ${exempted} \xB7 \u6C99\u7BB1\uFF1A${state}${at}` : "\u672C\u4F1A\u8BDD\uFF1A\u672A\u7ED1\u5B9A\u4F1A\u8BDD";
+    renderLogBox(rejectBoxEl, s?.recentRejects ?? [], s?.lastReject ?? null);
+    renderLogBox(sandboxBoxEl, s?.recentSandboxRejects ?? [], s?.lastSandboxReject ?? null);
     if (!balanceEl) return;
     const used = s?.used ?? { read: 0, web: 0, command: 0 };
     const rem = (total, u) => `${Math.max(0, total - u)}/${total}`;
-    balanceEl.textContent = `\u76F4\u67E5\u4F59\u989D\uFF1A\u8BFB ${rem(cfg.sessionTotals.read, used.read)} \xB7 \u7F51 ${rem(cfg.sessionTotals.web, used.web)} \xB7 \u547D\u4EE4 ${rem(cfg.sessionTotals.command, used.command)} \xB7 \u8C41\u514D ${rem(cfg.exemptionRoundCap, exempted)}`;
+    balanceEl.textContent = `\u8BFB ${rem(cfg.sessionTotals.read, used.read)} \xB7 \u7F51 ${rem(cfg.sessionTotals.web, used.web)} \xB7 \u547D\u4EE4 ${rem(cfg.sessionTotals.command, used.command)} \xB7 \u8C41\u514D ${rem(cfg.exemptionRoundCap, exempted)}`;
   }
   function applyConfig(cfg, force) {
     config = cfg;
@@ -2283,6 +2296,15 @@ ${GUEST_UI_LOOK_CSS}`;
       at: intOr(lr.at, 0)
     };
   }
+  function normRecent(raw) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const it of raw) {
+      const r = normReject(it);
+      if (r) out.push(r);
+    }
+    return out.slice(0, 5);
+  }
   function normalizeSessionStats(raw) {
     const r = raw ?? {};
     const used = r.used ?? {};
@@ -2298,7 +2320,9 @@ ${GUEST_UI_LOOK_CSS}`;
       },
       updatedAt: intOr(r.updatedAt, 0),
       lastReject: normReject(r.lastReject),
-      lastSandboxReject: normReject(r.lastSandboxReject)
+      lastSandboxReject: normReject(r.lastSandboxReject),
+      recentRejects: normRecent(r.recentRejects),
+      recentSandboxRejects: normRecent(r.recentSandboxRejects)
     };
   }
   async function readCountsFile() {
