@@ -2079,7 +2079,8 @@ ${GUEST_UI_LOOK_CSS}`;
     root.append(sandboxSec);
     const quotaSec = el2("div", "section");
     quotaSec.append(
-      el2("div", "section-title", "plan \u76F4\u67E5\u989D\u5EA6"),
+      el2("div", "section-title", "\u76F4\u67E5\u989D\u5EA6"),
+      el2("div", "muted", "plan \u8BA1\u8BFB / \u7F51 / \u547D\u4EE4\uFF1Bbuild \u53EA\u8BA1\u7F51\uFF0Cread / glob / shell \u653E\u884C\u4E0D\u8BA1\u6570\u3002"),
       el2("div", "muted", `\u6539\u5B8C\u70B9\u4FDD\u5B58\uFF0C\u5199\u5165 ${CONFIG_PATH}\uFF1B\u63D2\u4EF6\u6BCF\u8F6E\u91CD\u8BFB\u3002`)
     );
     const wrap = el2("div", "settings");

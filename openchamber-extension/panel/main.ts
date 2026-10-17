@@ -4,7 +4,7 @@
  * - 头顶三行：本会话直查统计（直查拦截 / 派单 / 豁免）、沙箱状态与拦截、
  *   本会话直查余额（读/网/命令剩余 · 豁免剩余），数据来自插件写的
  *   `~/.config/opencode/assistant-counts.json`（v2：按会话分片 + sandbox 状态）
- * - 设置分两块：assistant 沙箱（总开关）；plan 直查额度（豁免词 / 每轮直查额度 /
+ * - 设置分两块：assistant 沙箱（总开关）；直查额度（plan 计读/网/命令，build 只计网；豁免词 / 每轮直查额度 /
  *   会话总额（读·网·命令）/ 豁免轮次上限 + 本会话「整场放行」）
  *   ——全部直接读写 `~/.config/opencode/assistant.json`
  * - 无后台服务、无联动、无子代理列表：面板只用宿主的文件能力（filesystem）
@@ -219,7 +219,8 @@ function buildDom(): void {
 
   const quotaSec = el('div', 'section');
   quotaSec.append(
-    el('div', 'section-title', 'plan 直查额度'),
+    el('div', 'section-title', '直查额度'),
+    el('div', 'muted', 'plan 计读 / 网 / 命令；build 只计网，read / glob / shell 放行不计数。'),
     el('div', 'muted', `改完点保存，写入 ${CONFIG_PATH}；插件每轮重读。`),
   );
   const wrap = el('div', 'settings');
