@@ -2175,10 +2175,11 @@ ${GUEST_UI_LOOK_CSS}`;
     wrap.append(exemptNoteEl);
   }
   function rejectText(lr) {
-    const reason = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : "";
-    const tool = (lr.tool ?? "").slice(0, 40);
-    const head = tool && tool !== reason ? tool : "";
-    return `${head}${head && reason ? "\uFF08" : ""}${reason}${head && reason ? "\uFF09" : ""} ${fmtTime(lr.at ?? 0)}`.trim();
+    const raw = (lr.tool ?? "").trim();
+    const label = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : "";
+    const tool = raw.length <= 24 && raw !== (lr.reason ?? "") ? raw : "";
+    const head = tool && label ? `${tool}\uFF08${label}\uFF09` : tool || label;
+    return `${head} ${fmtTime(lr.at ?? 0)}`.trim();
   }
   function renderStats(sessions, sandbox, cfg) {
     if (!statsEl) return;

@@ -330,10 +330,12 @@ function buildQuotaSettings(wrap: HTMLElement): void {
 // ---------------------------------------------------------------------------
 
 function rejectText(lr: RejectRec): string {
-  const reason = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : '';
-  const tool = (lr.tool ?? '').slice(0, 40);
-  const head = tool && tool !== reason ? tool : '';
-  return `${head}${head && reason ? '（' : ''}${reason}${head && reason ? '）' : ''} ${fmtTime(lr.at ?? 0)}`.trim();
+  const raw = (lr.tool ?? '').trim();
+  const label = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : '';
+  // 只显示短工具名；旧记录里可能是整段提示词，宁可不显示。
+  const tool = raw.length <= 24 && raw !== (lr.reason ?? '') ? raw : '';
+  const head = tool && label ? `${tool}（${label}）` : tool || label;
+  return `${head} ${fmtTime(lr.at ?? 0)}`.trim();
 }
 
 /** 上两行看本会话（直查拦截 + 沙箱拦截），末行是本会话直查余额。 */
