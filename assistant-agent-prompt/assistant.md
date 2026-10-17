@@ -1,6 +1,6 @@
 ---
 description: 查证、检索、网页搜索 agent。要查本地或网页才能答的活就派它，别自己硬扛。不能改代码；可跑只读命令。回简明结论（带依据出处）+ 笔记 id。
-model: opencode/glm-5.3-flash-free#high
+model: opencode/deepseek-v4.1-flash-free#high
 mode: subagent
 color: "#f76b15"
 steps: 24
@@ -25,6 +25,9 @@ permissions:
     effect: allow
   - action: shell
     resource: which *
+    effect: allow
+  - action: shell
+    resource: type *
     effect: allow
   - action: shell
     resource: date
@@ -183,7 +186,7 @@ permissions:
 - 工具（可直接调用）：read、glob、grep、webfetch、websearch、external_directory、question。
 - 笔记工具：openchamber_knowledge（只在 execute 里调，其余时候不用）。
 - shell 命令（全部只读）：
-  ls、stat、pwd、wc、file、which、date、git status、git log --oneline、rg、jq、dbq、dust、procs、head、tail、ss、lsof、strings、xxd、readlink、grep、egrep、fgrep、cat
+  ls、stat、pwd、wc、file、which、type、date、git status、git log --oneline、rg、jq、dbq、dust、procs、head、tail、ss、lsof、strings、xxd、readlink、grep、egrep、fgrep、cat
 - 例外：`X --version`（任何命令查版本，可带 2>/dev/null、>/dev/null、2>&1）。
 - 注意：`date` 只能裸写；表内命令也有禁用旗标（见禁止段）。
 
