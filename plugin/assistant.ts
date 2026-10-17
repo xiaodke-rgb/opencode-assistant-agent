@@ -431,40 +431,77 @@ function classify(tool, input, mode) {
 }
 
 // assistant 子代理 shell 的「必拒品类」轻判：与 assistant.md 的规则对应——
-// ① 重定向：原生层已不再拦（5 条 redirect deny 下放到这里），由 scanRedirects 做引号感知扫描——
-//    引号内的 > 不算重定向；目标 /dev/null 或 fd 复制（>&1 / >&2 / >&-）放行；指向真实文件的
-//    一律拒（含不空格 `cmd>f`）。写文件是唯一要守的不变式。
+// ① 重定向：原生层已不再拦（5 条 redirect deny 下放到这里），由 findFileRedirect 做引号/替换体感知扫描——
+//    单引号内全字面量；双引号里只有 $( ${ 反引号 才下钻；$((…)) 是算术（> 是比较符，不算重定向）；
+//    ${…} 只做花括号层级；命令替换体（$()、反引号）按命令上下文继续扫（支持嵌套）。
+//    目标 /dev/null 或 fd 复制（>&1 / >&2 / >&-）放行；指向真实文件的一律拒（含不空格 `cmd>f`）。
 // ② 禁用旗标：子串匹配（xxd -r / --output / ss -K / tail -f）；--pre 走边界匹配，免得误伤 --pretty。
 // ③ 解释器 argv0 与白名单外高频「探路」命令（给指向性文案）。其余交给原生白名单。
 const SUBAGENT_FLAG_DENIES = ["xxd -r", "--output", "ss -K", "tail -f"]
 const SUBAGENT_OUTSIDERS = new Set([
-  // 检索/读（指向 rg、read、grep 工具）
-  "grep", "egrep", "fgrep", "cat", "tac", "sed", "awk", "gawk", "less", "more", "vi", "vim", "nano",
+  // 读/检索：cat 与 shell grep 已收编（白名单），其余指向 rg / read / grep 工具 / head / tail
+  "tac", "sed", "awk", "gawk", "less", "more", "vi", "vim", "nano",
   // 包/系统查询（指向 dbq、read、写进缺）
   "dpkg", "apt", "apt-get", "npm", "npx", "pnpm", "yarn", "pip", "pip3", "uv", "sqlite3", "systemctl",
   // shell 内建探路（指向 which）
   "command", "type", "echo", "printf", "env", "printenv", "sleep", "source", "tee",
   // 网络与写操作（指向"施工类由主代理做"）
   "curl", "wget", "rm", "mv", "cp", "mkdir", "touch", "chmod", "chown", "kill", "pkill", "dd", "sudo",
+  // 能起子进程的检索工具
+  "find", "xargs",
 ])
 
-// 引号感知：找出未加引号的 `>` 重定向；/dev/null 与 fd 复制放行，指向真实文件即写盘。
-function scanRedirects(cmd) {
-  let quote = null
+// 引号/替换体感知：找第一个「写到真实文件」的重定向；/dev/null、fd 复制（>&1/>&2/>&-）放行。
+function findFileRedirect(cmd) {
+  const stack = ["cmd"] // cmd | dq | sq | sub | bt | arith | param
+  let arithDepth = 0
+  const top = () => stack[stack.length - 1]
   for (let i = 0; i < cmd.length; i++) {
     const ch = cmd[i]
-    if (quote) {
-      if (ch === "\\" && quote === '"') { i++; continue }
-      if (ch === quote) quote = null
+    const ctx = top()
+    if (ctx === "sq") {
+      if (ch === "'") stack.pop()
+      continue
+    }
+    if (ctx === "arith") {
+      if (ch === "(") { arithDepth++; continue }
+      if (ch === ")") { arithDepth--; if (arithDepth <= 0) stack.pop(); continue }
+      if (ch === "$" && cmd[i + 1] === "(" && cmd[i + 2] === "(") { stack.push("arith"); arithDepth = 2; i += 2; continue }
+      if (ch === "$" && cmd[i + 1] === "(") { stack.push("sub"); i++; continue }
+      if (ch === "$" && cmd[i + 1] === "{") { stack.push("param"); i++; continue }
+      if (ch === "`") { stack.push("bt"); continue }
+      if (ch === "'") { stack.push("sq"); continue }
+      if (ch === '"') { stack.push("dq"); continue }
+      continue
+    }
+    if (ctx === "param") {
+      if (ch === "}") { stack.pop(); continue }
+      if (ch === "$" && cmd[i + 1] === "(") { stack.push("sub"); i++; continue }
+      if (ch === "`") { stack.push("bt"); continue }
       continue
     }
     if (ch === "\\") { i++; continue }
-    if (ch === '"' || ch === "'") { quote = ch; continue }
+    if (ctx === "dq") {
+      if (ch === '"') { stack.pop(); continue }
+      if (ch === "$" && cmd[i + 1] === "(" && cmd[i + 2] === "(") { stack.push("arith"); arithDepth = 2; i += 2; continue }
+      if (ch === "$" && cmd[i + 1] === "(") { stack.push("sub"); i++; continue }
+      if (ch === "$" && cmd[i + 1] === "{") { stack.push("param"); i++; continue }
+      if (ch === "`") { stack.push("bt"); continue }
+      continue
+    }
+    if (ch === "'") { stack.push("sq"); continue }
+    if (ch === '"') { stack.push("dq"); continue }
+    if (ch === "`") { if (ctx === "bt") stack.pop(); else stack.push("bt"); continue }
+    if (ch === "$" && cmd[i + 1] === "(" && cmd[i + 2] === "(") { stack.push("arith"); arithDepth = 2; i += 2; continue }
+    if (ch === "$" && cmd[i + 1] === "(") { stack.push("sub"); i++; continue }
+    if (ch === "$" && cmd[i + 1] === "{") { stack.push("param"); i++; continue }
+    if (ctx === "sub" && ch === ")") { stack.pop(); continue }
     if (ch !== ">") continue
+    // 解析一个重定向：>> / >| / >&N / >&- / > file / >file
     let j = i + 1
     if (cmd[j] === ">") j++
+    if (cmd[j] === "|") j++
     if (cmd[j] === "&") {
-      // fd 复制：2>&1 / >&2 / >&-，不写文件
       j++
       while (j < cmd.length && /[0-9-]/.test(cmd[j])) j++
       i = j - 1
@@ -473,16 +510,16 @@ function scanRedirects(cmd) {
     while (j < cmd.length && /\s/.test(cmd[j])) j++ // `> file` 允许空格
     let tgt = ""
     while (j < cmd.length) {
-      const c = cmd[j]
-      if (/\s/.test(c) || ";|&<>".includes(c)) break
-      if (c === '"' || c === "'") {
-        const q2 = c
+      const c2 = cmd[j]
+      if (/\s/.test(c2) || ";|&<>()".includes(c2)) break
+      if (c2 === '"' || c2 === "'") {
+        const q2 = c2
         j++
         while (j < cmd.length && cmd[j] !== q2) { tgt += cmd[j]; j++ }
         j++
         continue
       }
-      tgt += c
+      tgt += c2
       j++
     }
     if (tgt === "/dev/null") { i = j - 1; continue }
@@ -516,7 +553,7 @@ function shellSegments(cmd) {
 function assistantShellHardNo(cmd) {
   const c = String(cmd ?? "")
   if (!c.trim()) return null
-  const redirect = scanRedirects(c)
+  const redirect = findFileRedirect(c)
   if (redirect) return { why: redirect, out: false }
   for (const f of SUBAGENT_FLAG_DENIES) {
     if (c.includes(f)) return { why: "禁用旗标（`" + f + "`）", out: false }
@@ -527,15 +564,17 @@ function assistantShellHardNo(cmd) {
     const argv0 = s.replace(/^rtk\s+/, "").split(/\s+/)[0]
     if (!argv0) continue
     const a = argv0.toLowerCase()
-    if (INTERPRETERS.has(a)) return { why: "解释器命令（" + argv0 + "）", out: false }
+    if (SUBAGENT_OUTSIDERS.has(a)) return { why: argv0, out: true }
     if (a === "git") {
       if (!/^git\s+(status|log)(\s|$)/.test(s)) return { why: "git " + (s.split(/\s+/)[1] || ""), out: true }
       continue
     }
-    if (SUBAGENT_OUTSIDERS.has(a)) return { why: argv0, out: true }
+    if (INTERPRETERS.has(a)) return { why: "解释器命令（" + argv0 + "）", out: false }
   }
   return null
 }
+
+export { findFileRedirect, shellSegments, assistantShellHardNo }
 
 // ---------------------------------------------------------------- tool hook
 async function onTool(event) {

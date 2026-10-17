@@ -72,6 +72,18 @@ permissions:
     resource: readlink *
     effect: allow
   - action: shell
+    resource: grep *
+    effect: allow
+  - action: shell
+    resource: egrep *
+    effect: allow
+  - action: shell
+    resource: fgrep *
+    effect: allow
+  - action: shell
+    resource: cat *
+    effect: allow
+  - action: shell
     resource: "*--pre *"
     effect: deny
   - action: shell
@@ -169,7 +181,7 @@ permissions:
 命令速查（要什么证据用什么命令；示例即标准形、一律不加重定向，照抄即可）：
 
 先记负向（这些会触发拒绝，别用）：
-- shell 的 grep / cat / less / sed / awk / echo / printf / find 都不是白名单命令，一用就被拒。读文件内容 → read 工具或 head/tail；过滤 → rg；列文件 → glob 或 rg --files。
+- shell 的 less / sed / awk / echo / printf / find / xargs 不是白名单命令，一用就被拒。读整份小文件 → `cat`，大文件用 read 的 offset/limit 或 head/tail；过滤 → `grep` 工具（结构化）、shell `grep` 或 `rg`；列文件 → glob、`ls` 或 `rg --files`。
 - 不要 `... | grep`、不要 shell 变量（`F=…;$F`）、不要 `$()`/反引号命令替换。
 
 要什么证据用什么命令：
