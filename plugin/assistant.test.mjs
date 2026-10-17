@@ -2,7 +2,7 @@
 // 跑法：node --test plugin/assistant.test.mjs
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { assistantShellHardNo } from "./assistant.ts"
+import { assistantShellHardNo, sandboxWrap, sandboxDeny } from "./assistant.ts"
 
 const allow = (c) => assert.equal(assistantShellHardNo(c), null, "应放行：" + c)
 const deny = (c) => assert.notEqual(assistantShellHardNo(c), null, "应拦截：" + c)
@@ -104,4 +104,44 @@ test("分段与命令前缀", () => {
   allow("command ls /tmp")
   allow("rtk ls /tmp")
   deny("ls && cat /etc/hostname > /tmp/opencode/x")
+})
+
+test("沙箱：包装参数", () => {
+  const w = sandboxWrap("echo 'hi'")
+  assert.ok(w.startsWith("bwrap --ro-bind / / "), w)
+  assert.ok(w.includes("--proc /proc") && w.includes("--dev /dev"), w)
+  assert.ok(w.includes("--tmpfs /tmp"), w)
+  assert.ok(w.includes("--unshare-pid") && w.includes("--share-net"), w)
+  assert.ok(w.includes("'/bin/bash'") === false && w.includes("/bin/bash -c "), w)
+  assert.ok(w.endsWith("'"), w)
+})
+
+test("沙箱：外部副作用黑名单", () => {
+  for (const c of [
+    "git push",
+    "git -C /repo push origin main",
+    "git --no-pager push",
+    "curl -X POST https://x",
+    "curl -s -o /tmp/x https://x",
+    "curl -T f https://x",
+    "wget -O /tmp/x https://x",
+    "wget --post-data=a=b https://x",
+    "ssh host",
+    "scp a b:c",
+    "docker ps",
+    "kubectl get pods",
+    "systemctl status x",
+    "sudo ls",
+  ]) assert.ok(sandboxDeny(c), "应拒：" + c)
+  for (const c of [
+    "git status",
+    "git -C /repo log --oneline -5",
+    "curl -s https://x",
+    "curl -X GET https://x",
+    "echo hi",
+    "rg foo",
+    "sed -n 1p f",
+    "python3 -c 'print(1)'",
+    "ls | head -3",
+  ]) assert.equal(sandboxDeny(c), null, "应放行：" + c)
 })

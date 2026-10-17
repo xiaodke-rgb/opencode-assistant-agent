@@ -9,131 +9,8 @@ permissions:
     resource: "*"
     effect: deny
   - action: shell
-    resource: ls*
+    resource: bwrap *
     effect: allow
-  - action: shell
-    resource: stat*
-    effect: allow
-  - action: shell
-    resource: pwd
-    effect: allow
-  - action: shell
-    resource: wc *
-    effect: allow
-  - action: shell
-    resource: file *
-    effect: allow
-  - action: shell
-    resource: which *
-    effect: allow
-  - action: shell
-    resource: type *
-    effect: allow
-  - action: shell
-    resource: sort *
-    effect: allow
-  - action: shell
-    resource: uniq *
-    effect: allow
-  - action: shell
-    resource: cut *
-    effect: allow
-  - action: shell
-    resource: tr *
-    effect: allow
-  - action: shell
-    resource: echo *
-    effect: allow
-  - action: shell
-    resource: date
-    effect: allow
-  - action: shell
-    resource: git status*
-    effect: allow
-  - action: shell
-    resource: git log --oneline*
-    effect: allow
-  - action: shell
-    resource: rg *
-    effect: allow
-  - action: shell
-    resource: jq *
-    effect: allow
-  - action: shell
-    resource: dbq *
-    effect: allow
-  - action: shell
-    resource: dust *
-    effect: allow
-  - action: shell
-    resource: procs *
-    effect: allow
-  - action: shell
-    resource: head *
-    effect: allow
-  - action: shell
-    resource: tail *
-    effect: allow
-  - action: shell
-    resource: ss *
-    effect: allow
-  - action: shell
-    resource: lsof *
-    effect: allow
-  - action: shell
-    resource: strings *
-    effect: allow
-  - action: shell
-    resource: xxd *
-    effect: allow
-  - action: shell
-    resource: readlink *
-    effect: allow
-  - action: shell
-    resource: grep *
-    effect: allow
-  - action: shell
-    resource: egrep *
-    effect: allow
-  - action: shell
-    resource: fgrep *
-    effect: allow
-  - action: shell
-    resource: cat *
-    effect: allow
-  - action: shell
-    resource: "* --version"
-    effect: allow
-  - action: shell
-    resource: "* --version 2>/dev/null"
-    effect: allow
-  - action: shell
-    resource: "* --version >/dev/null"
-    effect: allow
-  - action: shell
-    resource: "* --version 2>&1"
-    effect: allow
-  - action: shell
-    resource: "*--pre *"
-    effect: deny
-  - action: shell
-    resource: "*--pre=*"
-    effect: deny
-  - action: shell
-    resource: "*xxd -r*"
-    effect: deny
-  - action: shell
-    resource: "*--output*"
-    effect: deny
-  - action: shell
-    resource: "*ss -K*"
-    effect: deny
-  - action: shell
-    resource: "*tail *-f*"
-    effect: deny
-  - action: shell
-    resource: "*tail *-F*"
-    effect: deny
   - action: edit
     resource: "*"
     effect: deny
@@ -196,32 +73,28 @@ permissions:
 
 # 工具调用（严格遵守；违规调用会被直接拒绝，浪费步数）
 
-## 可用（白名单）
+## 可用（只读沙箱）
 
 - 工具（可直接调用）：read、glob、grep、webfetch、websearch、external_directory、question。
 - 笔记工具：openchamber_knowledge（只在 execute 里调，其余时候不用）。
-- shell 命令（全部只读）：
-  ls、stat、pwd、wc、file、which、type、date、git status、git log --oneline、rg、jq、dbq、dust、procs、head、tail、ss、lsof、strings、xxd、readlink、grep、egrep、fgrep、cat、sort、uniq、cut、tr、echo
-- 例外：`X --version`（任何命令查版本，可带 2>/dev/null、>/dev/null、2>&1）。
-- 注意：`date` 只能裸写；表内命令也有禁用旗标（见禁止段）。
+- shell 在只读沙箱里跑：`/` 只读，`/tmp` 是内存盘（命令结束即消失）。常用命令（ls/stat/rg/jq/dbq/git status/git log/diff/sed/awk/find/ps/ss/lsof/curl 等）都能用，写盘会报 `Read-only file system`。
+- 读 git 仓库加 `GIT_OPTIONAL_LOCKS=0`（如 `GIT_OPTIONAL_LOCKS=0 git -C /repo status`），避免只读下刷 index 失败。
+- `X --version` 照常可用。
 
 ## 禁止（命中即拒）
 
 - 工具：
   edit、patch、subagent、skill、chrome-devtools、openchamber、openchamber_web、openchamber_memory、openchamber_notify、openchamber_render。
-- 命令：
-  表外一律拒（高频例子）：less / sed / awk / printf / find / xargs、curl / wget、dpkg / apt / npm / sqlite3、rm / mv / cp / mkdir / touch / chmod / kill / tee …
-  表内禁用旗标：`xxd -r`、`ss -K`、`tail -f` / `-F` / `--follow`、`--output`（如 `git log --output=f`）、`rg --pre`。
-  解释器：`python3 -c`、`node -e`、`sh -c`、`bash` 等。
-  shell 变量（`F=…;$F`）；命令替换可以用，但替换体和整条一样受白名单与重定向约束（替换体里的写重定向照样拒）。
+- 命令（沙箱挡不住的外部副作用）：`git push`、docker / podman / kubectl、systemctl / service、crontab / at、ssh / scp / sftp / rsync / nc / socat / telnet、sudo、shutdown / reboot。
+- 上传/下载落盘：curl 的 `-o`/`-O`/`-T`/`-d`/`-F`、wget 的 `-O`/`-P`/post 类旗标。
+- 不要试图写盘：`> 真实文件`、`sed -i`、`touch`、`rm`、`git checkout` 都会失败；要改文件写进「缺」。
 
-## 重定向（被拒最多的就是它，先看这条）
+## 重定向
 
-- 只看目标：**指向真实路径就拒**——`> f`、`2> f`、`>> f`、`1> f`、`&> f`、`>| f`、`<> f`。
-- 放行两种：指向 `/dev/null`（`2>/dev/null`、`>/dev/null`）；`>&1`、`1>&2`、`>&-` 是 fd 复制，不写盘。
-- assistant 不写文件：**默认一条都不加**。报错是有用信号，不要往 `/dev/null` 里藏。
+- 指向真实文件会 `Read-only file system`；`2>/dev/null`、`>/dev/null`、`>&1` 可用。
+- assistant 不写文件：默认一条都不加。报错是有用信号，不要往 `/dev/null` 里藏。
 
-## 工具建议（不是白名单；能替代时优先用这里的）
+## 工具建议（能替代时优先用这里的）
 
 - 找文件 glob；读文件 read（大文件先 rg -n 定位，再按 offset/limit 读段，别整读）；检索 grep 工具，正则/计数/二进制用 rg；JSON 用 jq；占用 dust；进程端口 procs/ss/lsof；日志头尾 head/tail。
 - 网页 websearch，看原文才 webfetch；官方文档 URL 直接抓；同一地址失败一次就换来源，不要用同样参数重试。
@@ -234,15 +107,12 @@ permissions:
 ## 调用规则（非常重要）
 
 - 批量：一次思考=一步；无依赖的调用同轮全发（5~10 条不嫌多）；任务列几件事第一轮全发；依赖前一步的才下一轮。
-- 拼接：白名单命令可用 ; / && / | 串，一段不合法整条作废、拼接前必须思考清楚；不要用 printf 打分隔线（表外），分段直接 `;`。
-- 版本例外：X --version 单独一条（可带 2>/dev/null、>/dev/null、2>&1），可接白名单命令；同段里 --version 后不夹其他参数。
-- 被拒：不是原样重试。按拒绝类型一次换对（第二次就是最后一次）：
-  · 解释器（node、python3、sh -c）→ 查版本用 `X --version`；要解析/计算改用 read、jq、dbq。
-  · 白名单外命令（less、sed、awk、find、curl…）→ 换等价手段（工具或表内命令）：grep 工具或 rg、read 或 cat、glob 或 rg --files、webfetch。
-  · 写文件重定向是完全被禁止的 → 直接删掉，让输出回显；量大就先 -c/-m 限量再取。
-    （只有本来就想压掉 stderr 噪音时才用 2>/dev/null，禁止用它"救"写盘重定向。）
-  · 一整条里某段被拒 → 拆开，只发合法的那几段。
-  · `--version` 混了别的 → 单独一条。
+- 拼接：可用 ; / && / | 串；不要用 printf 打分隔线，分段直接 `;`。
+- 版本例外：X --version 单独一条（可带 2>/dev/null、>/dev/null、2>&1）；同段里 --version 后不夹其他参数。
+- 被拒：不是原样重试。
+  · 外部副作用类（git push、docker、systemctl、ssh…）→ 只读查证不需要，换本地方案或写进「缺」。
+  · 写盘类（sed -i、touch、rm、重定向）→ 会 `Read-only file system`，直接删掉，让输出回显。
+  · 一整条里某段被拒 → 拆开，只发能用的那几段。
   第二次仍被拒就停：写进「缺」（要什么命令、要拿什么），让主代理跑。
 - execute 只在写笔记时用（具体写法见「写笔记」）。
 - 输出量：先数（-c）再定向取（-m/-l/-o）；长输出只贴要用的行。

@@ -63,12 +63,17 @@ const MSG = {
     `[assistant 守卫] ${why}。按提示改一处后重发一次；再被拒就停，把需求写进「缺」让主代理跑。`,
   subagentShellOut: (name) =>
     `[assistant 守卫] 白名单外命令（${name}）：改用 read / grep 工具 / rg / jq / dbq，或写进「缺」；施工类由主代理在 build 做。`,
+  sandboxDeny: (why) =>
+    `[assistant 守卫] 只读沙箱仍会改外部状态（${why}），不能做；换只读查证命令，或写进「缺」让主代理跑。`,
+  sandboxOff: () =>
+    `[assistant 守卫] 只读沙箱不可用（bwrap 探测失败），shell 已停用；改用 read / grep 工具，或写进「缺」。`,
 }
 
 // ---------------------------------------------------------------- state / io
 let ctxRef = null
 let fsM = null
 let fsP = null
+let cpM = null
 let cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
 let cfgAt = 0
 
@@ -82,6 +87,7 @@ const S = {
 async function loadDeps() {
   if (!fsM) fsM = await import("node:fs")
   if (!fsP) fsP = fsM.promises
+  if (!cpM) cpM = await import("node:child_process")
 }
 
 function rec(sid) {
@@ -643,6 +649,122 @@ function assistantShellHardNo(cmd) {
 
 export { findFileRedirect, shellSegments, assistantShellHardNo }
 
+// ---------------------------------------------------------------- read-only sandbox (bwrap)
+// assistant 子代理的 shell 一律包进 bwrap：/ 只读、/tmp 为内存盘、进程命名空间隔离。
+// frontmatter 只放行 `bwrap *`；插件没跑起来时命令不以 bwrap 开头，原生层直接拒——不会裸奔。
+const SANDBOX_DENY = new Set([
+  "ssh", "scp", "sftp", "rsync", "nc", "ncat", "socat", "telnet",
+  "docker", "podman", "kubectl", "systemctl", "service",
+  "crontab", "at", "sudo", "shutdown", "reboot", "poweroff", "halt", "init",
+])
+const CURL_IO_FLAGS = [
+  "-o", "-O", "--output", "--remote-name", "-T", "--upload-file", "-K", "--config",
+  "-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "-F", "--form",
+]
+const WGET_IO_FLAGS = [
+  "-O", "--output-document", "-P", "--directory-prefix",
+  "--post-data", "--post-file", "--method", "--body-data", "--body-file",
+]
+
+let sandboxOK = null
+
+function probeSandbox() {
+  if (sandboxOK !== null) return sandboxOK
+  try {
+    if (!cpM) return (sandboxOK = false)
+    const r = cpM.spawnSync(
+      "bwrap",
+      ["--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--unshare-pid", "--", "/bin/true"],
+      { timeout: 5000 },
+    )
+    sandboxOK = r?.status === 0
+  } catch {
+    sandboxOK = false
+  }
+  if (!sandboxOK) logEvent("warn", { note: "bwrap probe failed" })
+  return sandboxOK
+}
+
+function shq(s) {
+  return "'" + String(s).replace(/'/g, "'\\''") + "'"
+}
+
+function sandboxWrap(cmd) {
+  const parts = ["bwrap", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
+  for (const p of [HOME + "/.cache", HOME + "/.local/state", HOME + "/.npm"]) {
+    try { if (fsM && fsM.existsSync(p)) parts.push("--tmpfs", p) } catch {}
+  }
+  parts.push("--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup", "--share-net", "--", "/bin/bash", "-c")
+  parts.push(shq('cd "$PWD" 2>/dev/null; ' + String(cmd)))
+  return parts.join(" ")
+}
+
+// git 全局选项后取子命令（跳过 -C <path>、-c k=v、--no-pager、--git-dir=…）。
+function gitSub(tokens) {
+  let i = 0
+  while (i < tokens.length) {
+    const t = tokens[i]
+    if (t === "-C" || t === "-c") { i += 2; continue }
+    if (t === "--no-pager") { i += 1; continue }
+    if (t.startsWith("--git-dir=") || t.startsWith("--work-tree=")) { i += 1; continue }
+    break
+  }
+  return (tokens[i] || "").toLowerCase()
+}
+
+function hasFlag(tokens, from, flags) {
+  for (let i = from; i < tokens.length; i++) {
+    const t = tokens[i]
+    for (const f of flags) {
+      if (t === f || (f.startsWith("--") && t.startsWith(f + "="))) return true
+    }
+  }
+  return false
+}
+
+function curlMethod(tokens, from) {
+  for (let i = from; i < tokens.length; i++) {
+    const t = tokens[i]
+    if (t === "-X" || t === "--request") return String(tokens[i + 1] || "")
+    if (t.startsWith("--request=")) return t.slice("--request=".length)
+    if (/^-X./.test(t)) return t.slice(2)
+  }
+  return ""
+}
+
+function sandboxDeny(cmd) {
+  for (const seg of shellSegments(String(cmd ?? ""))) {
+    const s = stripQuoted(seg).trim()
+    if (!s) continue
+    const toks = s.split(/\s+/).filter(Boolean)
+    let i = 0
+    while (i < toks.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i])) i++
+    const a = (toks[i] || "").toLowerCase().replace(/^.*\//, "")
+    if (!a) continue
+    if (SANDBOX_DENY.has(a)) return a
+    if (a === "git" && gitSub(toks.slice(i + 1)) === "push") return "git push"
+    if (a === "curl") {
+      if (hasFlag(toks, i + 1, CURL_IO_FLAGS)) return "curl 写文件/上传"
+      const m = curlMethod(toks, i + 1)
+      if (m && m.toUpperCase() !== "GET") return "curl 非 GET 请求"
+    }
+    if (a === "wget" && hasFlag(toks, i + 1, WGET_IO_FLAGS)) return "wget 落盘/上传"
+  }
+  return null
+}
+
+function hasTailFollow(cmd) {
+  for (const seg of shellSegments(String(cmd ?? ""))) {
+    const s = stripQuoted(seg).trim()
+    const parts = s.split(/\s+/).filter(Boolean)
+    if ((parts[0] || "").toLowerCase().replace(/^.*\//, "") !== "tail") continue
+    const args = parts.slice(1)
+    if (args.some((t) => t === "--follow" || /^-[^-]*[fF]/.test(t))) return true
+  }
+  return false
+}
+
+export { sandboxWrap, sandboxDeny, probeSandbox }
 // ---------------------------------------------------------------- tool hook
 async function onTool(event) {
   let controlled = false
@@ -672,10 +794,30 @@ async function onTool(event) {
     // 其余放行（仍由原生权限白名单兜底）。general 等其它子代理一律放行。
     if (agent === "assistant") {
       if (tool === "shell" || tool === "bash") {
-        const hit = assistantShellHardNo(String(event?.input?.command ?? ""))
-        if (hit) {
-          logEvent("reject", { sessionID: sid, agent, tool, reason: "subagent-shell", message: hit.why })
-          throw guardError(hit.out ? MSG.subagentShellOut(hit.why) : MSG.subagentShell(hit.why))
+        const raw = String(event?.input?.command ?? "")
+        if (raw) {
+          if (hasTailFollow(raw)) {
+            const why = "tail -f / --follow（日志用 `tail -n 50`）"
+            logEvent("reject", { sessionID: sid, agent, tool, reason: "tail-follow", message: why })
+            throw guardError(MSG.subagentShell(why))
+          }
+          const deny = sandboxDeny(raw)
+          if (deny) {
+            logEvent("reject", { sessionID: sid, agent, tool, reason: "sandbox-side-effect", message: deny })
+            throw guardError(MSG.sandboxDeny(deny))
+          }
+          if (!probeSandbox()) {
+            logEvent("reject", { sessionID: sid, agent, tool, reason: "sandbox-off" })
+            throw guardError(MSG.sandboxOff())
+          }
+          if (event?.input && typeof event.input === "object") {
+            const wrapped = sandboxWrap(raw)
+            event.input.command = wrapped
+            if (S.approvedShell.size > 96) S.approvedShell.clear()
+            S.approvedShell.add(wrapped)
+            S.approvedShell.add(shellKey(wrapped))
+            logEvent("debug", { note: "sandboxed", sessionID: sid, command: raw.slice(0, 120) })
+          }
         }
       }
       return
@@ -906,7 +1048,8 @@ export default {
     try {
       await loadDeps()
       await refreshConfig(true)
-      logEvent("boot", { pid: process.pid, location: ctx?.location?.directory ?? "" })
+      const sb = probeSandbox()
+      logEvent("boot", { pid: process.pid, location: ctx?.location?.directory ?? "", sandbox: sb })
       console.log("[assistant] guard loaded at", ctx?.location?.directory ?? "")
     } catch (err) {
       console.warn("[assistant] init:", err?.message ?? err)
