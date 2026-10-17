@@ -604,6 +604,12 @@ function assistantShellHardNo(cmd) {
     const argv0 = s.replace(/^rtk\s+/, "").split(/\s+/)[0]
     if (!argv0) continue
     const a = argv0.toLowerCase()
+    if (a === "tail") {
+      const args = s.split(/\s+/).slice(1)
+      // 任何含 f/F 的旗标都算 follow：-f、-F、-qf、--follow（会挂住一步）
+      if (args.some((t) => t === "--follow" || /^-[^-]*[fF]/.test(t)))
+        return { why: "tail -f / --follow（日志用 `tail -n 50`）", out: false }
+    }
     if (SUBAGENT_OUTSIDERS.has(a)) return { why: argv0, out: true }
     if (a === "git") {
       if (!/^git\s+(status|log)(\s|$)/.test(s)) return { why: "git " + (s.split(/\s+/)[1] || ""), out: true }

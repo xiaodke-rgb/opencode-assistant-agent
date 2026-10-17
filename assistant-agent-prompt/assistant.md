@@ -111,7 +111,10 @@ permissions:
     resource: "*ss -K*"
     effect: deny
   - action: shell
-    resource: "*tail -f*"
+    resource: "*tail *-f*"
+    effect: deny
+  - action: shell
+    resource: "*tail *-F*"
     effect: deny
   - action: edit
     resource: "*"

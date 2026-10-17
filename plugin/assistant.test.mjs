@@ -32,6 +32,8 @@ test("放行：合法只读写法与无害重定向", () => {
     "node --version | head -1",
     "rg '--version' f",
     "git --version && date",
+    "tail -n 3 /etc/hostname",
+    "tail -n 50 /var/log/syslog",
   ]) allow(c)
 })
 
@@ -65,6 +67,10 @@ test("拦截：旗标 / 解释器 / 白名单外", () => {
     "git log --oneline --output=/tmp/x",
     "ss -K dst 1.2.3.4",
     "tail -f /var/log/syslog",
+    "tail -F /var/log/syslog",
+    "tail --follow /var/log/syslog",
+    "tail -n +1 -f /var/log/syslog",
+    "tail -qf /var/log/syslog",
     "rm -rf /tmp/x",
     "sh -c 'rm x' --version",
     "node --version --foo",
