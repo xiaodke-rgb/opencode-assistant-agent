@@ -26,6 +26,12 @@ test("放行：合法只读写法与无害重定向", () => {
     "cat /etc/hostname",
     "head -n 5 /etc/hostname",
     "ls; wc -l /etc/hosts",
+    "node --version",
+    "node --version 2>/dev/null",
+    "/usr/bin/node --version",
+    "node --version | head -1",
+    "rg '--version' f",
+    "git --version && date",
   ]) allow(c)
 })
 
@@ -60,6 +66,11 @@ test("拦截：旗标 / 解释器 / 白名单外", () => {
     "ss -K dst 1.2.3.4",
     "tail -f /var/log/syslog",
     "rm -rf /tmp/x",
+    "sh -c 'rm x' --version",
+    "node --version --foo",
+    "node --version > /tmp/opencode/x",
+    "date; node --version --foo",
+    "$(rm>/tmp/x) --version",
   ]) deny(c)
 })
 

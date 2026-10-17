@@ -550,6 +550,42 @@ function shellSegments(cmd) {
   return out.map((s) => s.trim()).filter(Boolean)
 }
 
+// 抠掉引号内内容（保留空格结构），用于识别「未加引号的旗标」。
+function stripQuoted(cmd) {
+  let out = ""
+  let quote = null
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]
+    if (quote) {
+      if (ch === "\\" && quote === '"') { i++; continue }
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "\\") { out += cmd[i + 1] ?? ""; i++; continue }
+    if (ch === '"' || ch === "'") { quote = ch; out += " "; continue }
+    out += ch
+  }
+  return out
+}
+
+// 版本查询段：`命令名 --version`，尾部只准纯消噪（2>/dev/null、>/dev/null、2>&1）。
+// 目的：放行模型查版本的日常写法，同时挡掉 `sh -c '…' --version` 这种借 $0 执行。
+function isVersionQuery(seg) {
+  const s = stripQuoted(seg).trim().replace(/^command\s+(?!-)/, "").replace(/^rtk\s+/, "")
+  const parts = s.split(/\s+/).filter(Boolean)
+  if (parts.length < 2) return false
+  if (!/^[A-Za-z0-9_./+-]+$/.test(parts[0])) return false
+  if (parts[1] !== "--version") return false
+  for (let i = 2; i < parts.length; i++) {
+    const t = parts[i]
+    if (t === "2>&1" || t === ">&2" || t === ">&-") continue
+    if (/^[12&]?>>?\/dev\/null$/.test(t)) continue
+    if (/^[12&]?>$/.test(t) && parts[i + 1] === "/dev/null") { i++; continue }
+    return false
+  }
+  return true
+}
+
 function assistantShellHardNo(cmd) {
   const c = String(cmd ?? "")
   if (!c.trim()) return null
@@ -559,7 +595,11 @@ function assistantShellHardNo(cmd) {
     if (c.includes(f)) return { why: "禁用旗标（`" + f + "`）", out: false }
   }
   if (/--pre(=|\s)/.test(c)) return { why: "禁用旗标（`--pre`）", out: false }
+  const hasVersion = /--version/.test(stripQuoted(c))
   for (const seg of shellSegments(c)) {
+    if (isVersionQuery(seg)) continue
+    if (hasVersion && /--version/.test(stripQuoted(seg)))
+      return { why: "`--version` 只能单独查一个命令的版本（可带 2>/dev/null），禁止组合使用", out: false }
     const s = seg.replace(/^command\s+(?!-)/, "")
     const argv0 = s.replace(/^rtk\s+/, "").split(/\s+/)[0]
     if (!argv0) continue

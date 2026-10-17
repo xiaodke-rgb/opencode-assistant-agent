@@ -84,6 +84,18 @@ permissions:
     resource: cat *
     effect: allow
   - action: shell
+    resource: "* --version"
+    effect: allow
+  - action: shell
+    resource: "* --version 2>/dev/null"
+    effect: allow
+  - action: shell
+    resource: "* --version >/dev/null"
+    effect: allow
+  - action: shell
+    resource: "* --version 2>&1"
+    effect: allow
+  - action: shell
     resource: "*--pre *"
     effect: deny
   - action: shell
@@ -171,8 +183,8 @@ permissions:
 
 - shell 只能跑只读命令，以权限白名单为准。多条白名单命令可以串成一条（省步数）：互不依赖用 `;`，有依赖才用 `&&`；每一段都要是白名单命令，一段被拒整条作废，拼接要保守。
 - 重定向：写文件的（`>`、`2>`、`>>`、`1>`、`&>` 指向真实路径）一律不给，会被守卫拒；`2>/dev/null` 这类指向 `/dev/null` 的可以放行，但白名单命令本就不乱写 stderr、报错是有用信号，**默认别加**——`git status` 就写 `git status`；静默探测（如 `which node`）裸跑，靠退出码/报错判断。
-- 解释器命令（`python3 -c`、`node -e`、`sh -c`、`bash` 等）一律不给，别用。
-- 被拒后的改法：拒绝信息里指了改法就改那一处、重发一次（如删掉 `2>`；grep 换成 `rg`）。同一命令第二次仍被拒就停，改用白名单等价命令；仍不行才把需求写进结论让主代理跑。
+- 解释器命令（`python3 -c`、`node -e`、`sh -c`、`bash` 等）一律不给，别用；唯一例外是 `X --version` 查版本（只能单独一条，可带 `2>/dev/null`）。
+- 被拒后的改法：拒绝信息里指了改法就改那一处、重发一次（如删掉 `2>`、去掉写文件的重定向）。同一命令第二次仍被拒就停，改用白名单等价命令；仍不行才把需求写进结论让主代理跑。
 
 - execute 只在写笔记时用：进去 search 找到 openchamber_knowledge（路径 tools.openchamber_knowledge）再调，调完就收手，别翻别的工具。
 
@@ -182,12 +194,12 @@ permissions:
 
 先记负向（这些会触发拒绝，别用）：
 - shell 的 less / sed / awk / echo / printf / find / xargs 不是白名单命令，一用就被拒。读整份小文件 → `cat`，大文件用 read 的 offset/limit 或 head/tail；过滤 → `grep` 工具（结构化）、shell `grep` 或 `rg`；列文件 → glob、`ls` 或 `rg --files`。
-- 不要 `... | grep`、不要 shell 变量（`F=…;$F`）、不要 `$()`/反引号命令替换。
+- 不要 shell 变量（`F=…;$F`）；命令替换尽量别用（白名单内命令不会被拒，但替换体里写重定向照样会拒）。
 
 要什么证据用什么命令：
-- 查版本/环境 → 系统：read 或 head `/etc/os-release`（PRETTY_NAME）；可执行文件：`which X` + `readlink -f X`/`ls -lh X` 看软链，`file X` 看类型；版本号藏在 package.json 等里用 jq/rg 读。别跑 `X --version`。
+- 查版本/环境 → 系统：read 或 head `/etc/os-release`（PRETTY_NAME）；可执行文件：`which X` + `readlink -f X`/`ls -lh X` 看软链，`file X` 看类型；版本号藏在 package.json 等里用 jq/rg 读。查版本直接 `X --version`（可带 `2>/dev/null`；不要和其他命令组合）。
 - 盘点/最新文件 → `ls -lh`、`ls -lt`（按时间）、`stat`、`wc -l`、`file`；占用 → `dust -n 8 -b -c <目录>`
-- 检索 → 首选 `grep` 工具（结构化「文件:行:内容」）；要正则/计数/只留文件名/二进制 → `rg -n -m 20 '正则' <路径>`（`-c` 数、`-l` 只列文件、`-o` 只留命中段、`-m N` 限量、`-a` 二进制当文本）
+- 检索 → `grep` 工具或 shell `grep` 都行；要正则/计数/只留文件名/二进制 → `rg -n -m 20 '正则' <路径>`（`-c` 数、`-l` 只列文件、`-o` 只留命中段、`-m N` 限量、`-a` 二进制当文本）
 - 日志头尾 → `head -n 50 <文件>`、`tail -n 50 <文件>`（不要 `tail -f`）
 - JSON/JSONL → `jq -c 'select(.kind=="reject")' <文件>`；聚合 → `jq -sc 'group_by(.kind)|map({kind:.[0].kind,n:length})' <文件>`
 - SQLite（含 opencode.db）→ `dbq '<一条 SELECT>'`（只读）；`--tables` 看表、`--limit N` 限量；JSON 字段用单引号：`json_extract(data,'$.model.id')`
@@ -197,7 +209,7 @@ permissions:
 
 怎么查
 - 动手前必须把问题想清楚（要答什么、怎么查、调什么工具），想透再动手、调用要精准；禁止「想一次、只调两三条、再想一次」的碎轮探索。每另起一轮都算一步，不要反复复盘。
-- 先定位再读片段：只读和问题有关的段，不要整文件通读。
+- 先定位再读片段：大文件只读和问题有关的段；小文件整读没问题（`cat` 或 read）。
 - 网页：官方文档 URL 直接 webfetch；同一地址失败一次就换来源，不要用同样参数重试。
 - 你只有24步：一轮思考加工具调用=一步；用掉20步还没成形就带着已有结果收工。提前收工也要先写入笔记。
 
