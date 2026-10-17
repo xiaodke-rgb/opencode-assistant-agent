@@ -1,11 +1,12 @@
 /**
  * assistant 面板（纯设置 + 统计）
  *
- * - 头顶：本会话守卫统计一行（拦截 / 派单 / 豁免 + 最近一条拦截）+ 本会话余额一行
- *   （读/网/命令剩余 · 豁免剩余），数据来自插件写的
- *   `~/.config/opencode/assistant-counts.json`（v2：按会话分片）
- * - 设置：总开关 / 豁免词 / 每轮直查额度 / 会话总额（读·网·命令）/ 豁免轮次上限
- *   + 本会话「整场放行」——全部直接读写 `~/.config/opencode/assistant.json`
+ * - 头顶三行：本会话直查统计（直查拦截 / 派单 / 豁免）、沙箱状态与拦截、
+ *   本会话直查余额（读/网/命令剩余 · 豁免剩余），数据来自插件写的
+ *   `~/.config/opencode/assistant-counts.json`（v2：按会话分片 + sandbox 状态）
+ * - 设置分两块：assistant 沙箱（总开关）；plan 直查额度（豁免词 / 每轮直查额度 /
+ *   会话总额（读·网·命令）/ 豁免轮次上限 + 本会话「整场放行」）
+ *   ——全部直接读写 `~/.config/opencode/assistant.json`
  * - 无后台服务、无联动、无子代理列表：面板只用宿主的文件能力（filesystem）
  *
  * 面板折叠后仍挂载（宿主行为），所以统计会继续刷新（5s 一次，文件很小）。
@@ -39,18 +40,23 @@ type Config = {
   exemptionRoundCap: number;
   exemptSessions: Record<string, boolean>;
 };
+type RejectRec = { tool?: string; reason?: string; at?: number };
 type SessionStats = {
   rejected: number;
   dispatched: number;
   exempted: number;
+  sandboxRejects: number;
   used: Totals;
   updatedAt: number;
-  lastReject: { tool?: string; reason?: string; at?: number } | null;
+  lastReject: RejectRec | null;
+  lastSandboxReject: RejectRec | null;
 };
+type SandboxState = { ok?: boolean; at?: number };
 type CountsFile = {
   v?: number;
   updatedAt?: number;
   sessions?: Record<string, unknown>;
+  sandbox?: SandboxState;
 };
 
 /** 与插件的默认值一致；配置文件缺失/字段缺失时兜底。 */
@@ -69,6 +75,9 @@ const REASON_LABEL: Record<string, string> = {
   pool: '额度用尽',
   total: '总额用尽',
   unknown: '未列工具',
+  'sandbox-side-effect': '外部副作用',
+  'tail-follow': 'tail -f',
+  'sandbox-off': '沙箱不可用',
 };
 
 // ---------------------------------------------------------------------------
@@ -149,6 +158,7 @@ function normalizeConfig(raw: unknown): Config {
 // ---------------------------------------------------------------------------
 
 let statsEl!: HTMLElement;
+let sandboxEl!: HTMLElement;
 let balanceEl!: HTMLElement;
 let saveStateEl!: HTMLElement;
 let exemptNoteEl: HTMLElement | null = null;
@@ -189,48 +199,61 @@ function buildDom(): void {
   const hd = el('div', 'hd');
   hd.append(el('h1', '', 'assistant 守卫'));
   statsEl = el('div', 'stats muted', '本会话：统计加载中…');
+  sandboxEl = el('div', 'stats muted', '沙箱：状态未知');
   balanceEl = el('div', 'stats muted', '');
-  hd.append(statsEl, balanceEl);
+  hd.append(statsEl, sandboxEl, balanceEl);
   root.append(hd);
 
   bannerWrap = el('div');
   root.append(bannerWrap);
 
-  const sSec = el('div', 'section');
-  sSec.append(
-    el('div', 'section-title', '设置'),
+  const sandboxSec = el('div', 'section');
+  sandboxSec.append(
+    el('div', 'section-title', 'assistant 沙箱'),
+    el('div', 'muted', '只影响 assistant 子代理的 shell；总开关关掉后沙箱仍生效。'),
+  );
+  const sbWrap = el('div', 'settings');
+  buildSandboxSettings(sbWrap);
+  sandboxSec.append(sbWrap);
+  root.append(sandboxSec);
+
+  const quotaSec = el('div', 'section');
+  quotaSec.append(
+    el('div', 'section-title', 'plan 直查额度'),
     el('div', 'muted', `改完点保存，写入 ${CONFIG_PATH}；插件每轮重读。`),
   );
   const wrap = el('div', 'settings');
-  buildSettings(wrap);
-  sSec.append(wrap);
-  root.append(sSec);
+  buildQuotaSettings(wrap);
+  quotaSec.append(wrap);
+  root.append(quotaSec);
 }
 
-function buildSettings(wrap: HTMLElement): void {
-  const mark = (): void => {
-    dirty = true;
-    saveBtn?.update({ disabled: false });
-    if (saveStateEl) saveStateEl.textContent = '有未保存更改';
-  };
+function markDirty(): void {
+  dirty = true;
+  saveBtn?.update({ disabled: false });
+  if (saveStateEl) saveStateEl.textContent = '有未保存更改';
+}
 
+function buildSandboxSettings(wrap: HTMLElement): void {
   swEnabled = mountSwitch(wrap, {
     label: '插件总开关',
-    description: '关掉后守卫不再拦截（plan / build 全放行）',
+    description: '关掉后 plan / build 直查不再拦截；assistant 只读沙箱始终生效',
     checked: true,
     onChange: (v) => {
       if (draft) draft.enabled = v;
-      mark();
+      markDirty();
     },
   });
+}
 
+function buildQuotaSettings(wrap: HTMLElement): void {
   tfWord = mountTextField(wrap, {
     label: '豁免词',
     placeholder: '#nocap',
     value: '',
     onChange: (v) => {
       if (draft) draft.exemptionWord = v;
-      mark();
+      markDirty();
     },
   });
 
@@ -240,7 +263,7 @@ function buildSettings(wrap: HTMLElement): void {
     value: '',
     onChange: (v) => {
       if (draft) draft.poolPerRound = v.trim() === '' ? NaN : Number(v);
-      mark();
+      markDirty();
     },
   });
 
@@ -251,7 +274,7 @@ function buildSettings(wrap: HTMLElement): void {
     value: '',
     onChange: (v) => {
       if (draft) draft.read = v.trim() === '' ? NaN : Number(v);
-      mark();
+      markDirty();
     },
   });
   tfWeb = mountTextField(row, {
@@ -259,7 +282,7 @@ function buildSettings(wrap: HTMLElement): void {
     value: '',
     onChange: (v) => {
       if (draft) draft.web = v.trim() === '' ? NaN : Number(v);
-      mark();
+      markDirty();
     },
   });
   tfCmd = mountTextField(row, {
@@ -267,7 +290,7 @@ function buildSettings(wrap: HTMLElement): void {
     value: '',
     onChange: (v) => {
       if (draft) draft.command = v.trim() === '' ? NaN : Number(v);
-      mark();
+      markDirty();
     },
   });
 
@@ -277,7 +300,7 @@ function buildSettings(wrap: HTMLElement): void {
     value: '',
     onChange: (v) => {
       if (draft) draft.exemptionRoundCap = v.trim() === '' ? NaN : Number(v);
-      mark();
+      markDirty();
     },
   });
 
@@ -306,8 +329,19 @@ function buildSettings(wrap: HTMLElement): void {
 // 渲染
 // ---------------------------------------------------------------------------
 
-/** 只显示面板绑定的这个会话（插件按会话分片记账），外加本会话余额一行。 */
-function renderStats(sessions: Record<string, SessionStats> | null, cfg: Config): void {
+function rejectText(lr: RejectRec): string {
+  const reason = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : '';
+  const tool = (lr.tool ?? '').slice(0, 40);
+  const head = tool && tool !== reason ? tool : '';
+  return `${head}${head && reason ? '（' : ''}${reason}${head && reason ? '）' : ''} ${fmtTime(lr.at ?? 0)}`.trim();
+}
+
+/** 上两行看本会话（直查拦截 + 沙箱拦截），末行是本会话直查余额。 */
+function renderStats(
+  sessions: Record<string, SessionStats> | null,
+  sandbox: SandboxState | null,
+  cfg: Config,
+): void {
   if (!statsEl) return;
   const s = sessionId ? sessions?.[sessionId] : undefined;
   const rejected = s?.rejected ?? 0;
@@ -315,18 +349,26 @@ function renderStats(sessions: Record<string, SessionStats> | null, cfg: Config)
   const exempted = s?.exempted ?? 0;
   const lr = s?.lastReject ?? null;
 
-  let text = sessionId ? `本会话：拦截 ${rejected} · 派单 ${dispatched} · 豁免 ${exempted}` : '本会话：未绑定会话';
-  if (lr) {
-    const reason = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : '';
-    text += ` · 最近 ${lr.tool ?? ''}${reason ? `（${reason}）` : ''} ${fmtTime(lr.at ?? 0)}`;
-  }
+  let text = sessionId ? `本会话：直查拦截 ${rejected} · 派单 ${dispatched} · 豁免 ${exempted}` : '本会话：未绑定会话';
+  if (lr) text += ` · 最近 ${rejectText(lr)}`;
   statsEl.textContent = text;
+
+  if (sandboxEl) {
+    const sbRejected = s?.sandboxRejects ?? 0;
+    const sbLast = s?.lastSandboxReject ?? null;
+    const state = sandbox ? (sandbox.ok ? '正常' : '不可用') : '未知';
+    let sb = `沙箱：${state}`;
+    if (sandbox?.at) sb += ` ${fmtTime(sandbox.at)}`;
+    sb += ` · 拦截 ${sbRejected}`;
+    if (sbLast) sb += ` · 最近 ${rejectText(sbLast)}`;
+    sandboxEl.textContent = sb;
+  }
 
   if (!balanceEl) return;
   const used = s?.used ?? { read: 0, web: 0, command: 0 };
   const rem = (total: number, u: number): string => `${Math.max(0, total - u)}/${total}`;
   balanceEl.textContent =
-    `余额：读 ${rem(cfg.sessionTotals.read, used.read)}` +
+    `直查余额：读 ${rem(cfg.sessionTotals.read, used.read)}` +
     ` · 网 ${rem(cfg.sessionTotals.web, used.web)}` +
     ` · 命令 ${rem(cfg.sessionTotals.command, used.command)}` +
     ` · 豁免 ${rem(cfg.exemptionRoundCap, exempted)}`;
@@ -412,32 +454,37 @@ async function readConfigFile(): Promise<{ cfg: Config; missing: boolean }> {
   }
 }
 
+function normReject(raw: unknown): RejectRec | null {
+  const lr = (raw ?? null) as Record<string, unknown> | null;
+  if (!lr) return null;
+  return {
+    tool: typeof lr.tool === 'string' ? lr.tool : undefined,
+    reason: typeof lr.reason === 'string' ? lr.reason : undefined,
+    at: intOr(lr.at, 0),
+  };
+}
+
 function normalizeSessionStats(raw: unknown): SessionStats {
   const r = (raw ?? {}) as Record<string, unknown>;
   const used = (r.used ?? {}) as Record<string, unknown>;
-  const lr = (r.lastReject ?? null) as Record<string, unknown> | null;
   return {
     rejected: intOr(r.rejected, 0),
     dispatched: intOr(r.dispatched, 0),
     exempted: intOr(r.exempted, 0),
+    sandboxRejects: intOr(r.sandboxRejects, 0),
     used: {
       read: intOr(used.read, 0),
       web: intOr(used.web, 0),
       command: intOr(used.command, 0),
     },
     updatedAt: intOr(r.updatedAt, 0),
-    lastReject: lr
-      ? {
-          tool: typeof lr.tool === 'string' ? lr.tool : undefined,
-          reason: typeof lr.reason === 'string' ? lr.reason : undefined,
-          at: intOr(lr.at, 0),
-        }
-      : null,
+    lastReject: normReject(r.lastReject),
+    lastSandboxReject: normReject(r.lastSandboxReject),
   };
 }
 
 /** 读统计文件（v2：按会话分片）。缺失/旧版/损坏都返回空表（显示零）。 */
-async function readCountsFile(): Promise<Record<string, SessionStats>> {
+async function readCountsFile(): Promise<{ sessions: Record<string, SessionStats>; sandbox: SandboxState | null }> {
   try {
     const res = await host.readFile(COUNTS_PATH);
     const raw = JSON.parse(res.content) as CountsFile;
@@ -446,9 +493,10 @@ async function readCountsFile(): Promise<Record<string, SessionStats>> {
     if (sessions && typeof sessions === 'object') {
       for (const [sid, rec] of Object.entries(sessions)) out[sid] = normalizeSessionStats(rec);
     }
-    return out;
+    const sb = raw?.sandbox;
+    return { sessions: out, sandbox: sb && typeof sb === 'object' ? sb : null };
   } catch {
-    return {};
+    return { sessions: {}, sandbox: null };
   }
 }
 
@@ -464,14 +512,14 @@ async function poll(): Promise<void> {
   if (!built || polling) return;
   polling = true;
   try {
-    const [cfgRes, sessions] = await Promise.all([readConfigFile(), readCountsFile()]);
+    const [cfgRes, counts] = await Promise.all([readConfigFile(), readCountsFile()]);
     if (cfgRes.missing) {
       setBanner('info', '还没有配置文件', `保存一次即可创建 ${CONFIG_PATH}（当前显示默认值）`);
     } else {
       clearBanner();
     }
     applyConfig(cfgRes.cfg, false);
-    renderStats(sessions, config);
+    renderStats(counts.sessions, counts.sandbox, config);
   } catch (err) {
     setBanner('warning', '读配置失败', `${errText(err)} · ${CONFIG_PATH}`);
   } finally {

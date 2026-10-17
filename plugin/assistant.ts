@@ -82,6 +82,7 @@ const S = {
   approvedShell: new Set(), // commands already classified & passed (for shell.create.before)
   dirtyCounts: new Set(), // sids with counter changes waiting to be merged into the counts file
   cfgWarned: 0,
+  sandbox: null, // { ok, at } 最近一次 bwrap 探测结果（写入 counts 文件供面板显示）
 }
 
 async function loadDeps() {
@@ -106,6 +107,8 @@ function rec(sid) {
       rejected: 0, // mirrored into the counts file (per session)
       dispatched: 0, // subagent sessions started from this session (session.created)
       lastReject: null, // { tool, reason, at }
+      sandboxRejects: 0, // assistant 沙箱拦截（记到子代理的父会话）
+      lastSandboxReject: null, // { tool, reason, at }
       loaded: false,
       loading: null,
       storageOK: true,
@@ -128,7 +131,9 @@ async function ensureLoaded(r) {
         if (Number.isFinite(data.exemptRounds)) r.exemptRounds = Math.max(r.exemptRounds, data.exemptRounds)
         if (Number.isFinite(data.rejected)) r.rejected = Math.max(r.rejected, data.rejected)
         if (Number.isFinite(data.dispatched)) r.dispatched = Math.max(r.dispatched, data.dispatched)
+        if (Number.isFinite(data.sandboxRejects)) r.sandboxRejects = Math.max(r.sandboxRejects, data.sandboxRejects)
         r.lastReject = pickNewest(data.lastReject, r.lastReject)
+        r.lastSandboxReject = pickNewest(data.lastSandboxReject, r.lastSandboxReject)
         if (data.main) r.main = true
       }
       r.storageOK = true
@@ -169,7 +174,9 @@ function persist(r) {
         exemptRounds: Math.max(numOr(p.exemptRounds, 0), numOr(r.exemptRounds, 0)),
         rejected: Math.max(numOr(p.rejected, 0), numOr(r.rejected, 0)),
         dispatched: Math.max(numOr(p.dispatched, 0), numOr(r.dispatched, 0)),
+        sandboxRejects: Math.max(numOr(p.sandboxRejects, 0), numOr(r.sandboxRejects, 0)),
         lastReject: pickNewest(p.lastReject, r.lastReject),
+        lastSandboxReject: pickNewest(p.lastSandboxReject, r.lastSandboxReject),
         main: !!(p.main || r.main),
         updatedAt: Date.now(),
       })
@@ -224,19 +231,23 @@ function mergeSession(fileRec, mine) {
   const lrFile = a.lastReject && typeof a.lastReject === "object" ? a.lastReject : null
   const lrMine = mine.lastReject
   const lr = lrMine && (!lrFile || numOr(lrMine.at, 0) >= numOr(lrFile.at, 0)) ? lrMine : lrFile
+  const sb = pickNewest(a.lastSandboxReject, mine.lastSandboxReject)
 
   return {
     rejected: Math.max(numOr(a.rejected, 0), mine.rejected),
     dispatched: Math.max(numOr(a.dispatched, 0), mine.dispatched),
     exempted: Math.max(numOr(a.exempted, 0), mine.exempted),
+    sandboxRejects: Math.max(numOr(a.sandboxRejects, 0), numOr(mine.sandboxRejects, 0)),
     used,
     lastReject: lr ? { tool: lr.tool, reason: lr.reason, at: numOr(lr.at, 0) } : null,
+    lastSandboxReject: sb ? { tool: sb.tool, reason: sb.reason, at: numOr(sb.at, 0) } : null,
     updatedAt: Date.now(),
   }
 }
 
 let countsTimer = null
 let flushing = false
+let sandboxDirty = false
 function scheduleCounts(delay) {
   if (countsTimer) return
   countsTimer = setTimeout(() => {
@@ -252,7 +263,7 @@ async function flushCounts() {
     return
   }
   const sids = [...S.dirtyCounts]
-  if (!sids.length) return
+  if (!sids.length && !sandboxDirty) return
   flushing = true
   let wrote = false
   try {
@@ -271,8 +282,10 @@ async function flushCounts() {
         rejected: numOr(r.rejected, 0),
         dispatched: numOr(r.dispatched, 0),
         exempted: numOr(r.exemptRounds, 0),
+        sandboxRejects: numOr(r.sandboxRejects, 0),
         used: r.counts,
         lastReject: r.lastReject,
+        lastSandboxReject: r.lastSandboxReject,
       })
     }
     const entries = Object.entries(sessions)
@@ -280,16 +293,21 @@ async function flushCounts() {
       entries.sort((x, y) => numOr(y[1]?.updatedAt, 0) - numOr(x[1]?.updatedAt, 0))
       sessions = Object.fromEntries(entries.slice(0, SESSION_KEEP))
     }
+    const out = { v: 2, updatedAt: Date.now(), sessions }
+    if (S.sandbox) out.sandbox = S.sandbox
     const tmp = COUNTS_PATH + "." + process.pid + ".tmp"
-    await fsP.writeFile(tmp, JSON.stringify({ v: 2, updatedAt: Date.now(), sessions }, null, 2))
+    await fsP.writeFile(tmp, JSON.stringify(out, null, 2))
     await fsP.rename(tmp, COUNTS_PATH)
     wrote = true
   } catch (err) {
     console.warn("[assistant] counts flush failed:", err?.message ?? err)
   } finally {
     flushing = false
-    if (wrote) for (const sid of sids) S.dirtyCounts.delete(sid)
-    if (S.dirtyCounts.size) scheduleCounts(wrote ? 300 : 2000)
+    if (wrote) {
+      for (const sid of sids) S.dirtyCounts.delete(sid)
+      sandboxDirty = false
+    }
+    if (S.dirtyCounts.size || sandboxDirty) scheduleCounts(wrote ? 300 : 2000)
   }
 }
 
@@ -681,6 +699,9 @@ function probeSandbox() {
   } catch {
     sandboxOK = false
   }
+  S.sandbox = { ok: sandboxOK, at: Date.now() }
+  sandboxDirty = true
+  scheduleCounts(0)
   if (!sandboxOK) logEvent("warn", { note: "bwrap probe failed" })
   return sandboxOK
 }
@@ -753,6 +774,30 @@ function sandboxDeny(cmd) {
   return null
 }
 
+// 沙箱拦截计数记到子代理的父会话，面板才能在「本会话」下看到；
+// 查不到父会话时记在子会话上。任何失败都不能影响拒绝本身。
+const parentCache = new Map()
+async function noteSandboxReject(sid, reason, why) {
+  try {
+    let pid = parentCache.get(sid)
+    if (pid === undefined) {
+      pid = ""
+      try {
+        const info = await ctxRef.session.get({ sessionID: sid })
+        pid = String(info?.parentID ?? "")
+      } catch {}
+      parentCache.set(sid, pid)
+    }
+    const target = pid ? rec(pid) : rec(sid)
+    await ensureLoaded(target)
+    target.sandboxRejects = numOr(target.sandboxRejects, 0) + 1
+    target.lastSandboxReject = { tool: reason, reason, at: Date.now() }
+    touchSession(target)
+    persist(target)
+    logEvent("reject", { sessionID: sid, parentID: pid || undefined, agent: "assistant", reason, message: why })
+  } catch {}
+}
+
 function hasTailFollow(cmd) {
   for (const seg of shellSegments(String(cmd ?? ""))) {
     const s = stripQuoted(seg).trim()
@@ -772,7 +817,6 @@ async function onTool(event) {
     if (!ctxRef) return
     await loadDeps()
     await refreshConfig(false)
-    if (!cfg.enabled) return
 
     const tool = String(event?.tool ?? "").toLowerCase()
     const sid = String(event?.sessionID ?? "")
@@ -798,16 +842,16 @@ async function onTool(event) {
         if (raw) {
           if (hasTailFollow(raw)) {
             const why = "tail -f / --follow（日志用 `tail -n 50`）"
-            logEvent("reject", { sessionID: sid, agent, tool, reason: "tail-follow", message: why })
+            await noteSandboxReject(sid, "tail-follow", why)
             throw guardError(MSG.subagentShell(why))
           }
           const deny = sandboxDeny(raw)
           if (deny) {
-            logEvent("reject", { sessionID: sid, agent, tool, reason: "sandbox-side-effect", message: deny })
+            await noteSandboxReject(sid, "sandbox-side-effect", deny)
             throw guardError(MSG.sandboxDeny(deny))
           }
           if (!probeSandbox()) {
-            logEvent("reject", { sessionID: sid, agent, tool, reason: "sandbox-off" })
+            await noteSandboxReject(sid, "sandbox-off", "bwrap 探测失败")
             throw guardError(MSG.sandboxOff())
           }
           if (event?.input && typeof event.input === "object") {
@@ -823,6 +867,9 @@ async function onTool(event) {
       return
     }
     if (agent === "general") return
+
+    // 总开关只关 plan/build 直查守卫；assistant 的只读沙箱始终生效（关掉会裸奔）。
+    if (!cfg.enabled) return
 
     // 判定优先级：event.agent 直接决定；自定义主 agent 按 plan 守。
     let mode = null

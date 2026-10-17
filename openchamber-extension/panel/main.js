@@ -1971,7 +1971,10 @@ ${GUEST_UI_LOOK_CSS}`;
     build: "\u65BD\u5DE5\u7C7B",
     pool: "\u989D\u5EA6\u7528\u5C3D",
     total: "\u603B\u989D\u7528\u5C3D",
-    unknown: "\u672A\u5217\u5DE5\u5177"
+    unknown: "\u672A\u5217\u5DE5\u5177",
+    "sandbox-side-effect": "\u5916\u90E8\u526F\u4F5C\u7528",
+    "tail-follow": "tail -f",
+    "sandbox-off": "\u6C99\u7BB1\u4E0D\u53EF\u7528"
   };
   var built = false;
   var sessionId = null;
@@ -2023,6 +2026,7 @@ ${GUEST_UI_LOOK_CSS}`;
     };
   }
   var statsEl;
+  var sandboxEl;
   var balanceEl;
   var saveStateEl;
   var exemptNoteEl = null;
@@ -2058,43 +2062,55 @@ ${GUEST_UI_LOOK_CSS}`;
     const hd = el2("div", "hd");
     hd.append(el2("h1", "", "assistant \u5B88\u536B"));
     statsEl = el2("div", "stats muted", "\u672C\u4F1A\u8BDD\uFF1A\u7EDF\u8BA1\u52A0\u8F7D\u4E2D\u2026");
+    sandboxEl = el2("div", "stats muted", "\u6C99\u7BB1\uFF1A\u72B6\u6001\u672A\u77E5");
     balanceEl = el2("div", "stats muted", "");
-    hd.append(statsEl, balanceEl);
+    hd.append(statsEl, sandboxEl, balanceEl);
     root.append(hd);
     bannerWrap = el2("div");
     root.append(bannerWrap);
-    const sSec = el2("div", "section");
-    sSec.append(
-      el2("div", "section-title", "\u8BBE\u7F6E"),
+    const sandboxSec = el2("div", "section");
+    sandboxSec.append(
+      el2("div", "section-title", "assistant \u6C99\u7BB1"),
+      el2("div", "muted", "\u53EA\u5F71\u54CD assistant \u5B50\u4EE3\u7406\u7684 shell\uFF1B\u603B\u5F00\u5173\u5173\u6389\u540E\u6C99\u7BB1\u4ECD\u751F\u6548\u3002")
+    );
+    const sbWrap = el2("div", "settings");
+    buildSandboxSettings(sbWrap);
+    sandboxSec.append(sbWrap);
+    root.append(sandboxSec);
+    const quotaSec = el2("div", "section");
+    quotaSec.append(
+      el2("div", "section-title", "plan \u76F4\u67E5\u989D\u5EA6"),
       el2("div", "muted", `\u6539\u5B8C\u70B9\u4FDD\u5B58\uFF0C\u5199\u5165 ${CONFIG_PATH}\uFF1B\u63D2\u4EF6\u6BCF\u8F6E\u91CD\u8BFB\u3002`)
     );
     const wrap = el2("div", "settings");
-    buildSettings(wrap);
-    sSec.append(wrap);
-    root.append(sSec);
+    buildQuotaSettings(wrap);
+    quotaSec.append(wrap);
+    root.append(quotaSec);
   }
-  function buildSettings(wrap) {
-    const mark = () => {
-      dirty = true;
-      saveBtn?.update({ disabled: false });
-      if (saveStateEl) saveStateEl.textContent = "\u6709\u672A\u4FDD\u5B58\u66F4\u6539";
-    };
+  function markDirty() {
+    dirty = true;
+    saveBtn?.update({ disabled: false });
+    if (saveStateEl) saveStateEl.textContent = "\u6709\u672A\u4FDD\u5B58\u66F4\u6539";
+  }
+  function buildSandboxSettings(wrap) {
     swEnabled = mountSwitch(wrap, {
       label: "\u63D2\u4EF6\u603B\u5F00\u5173",
-      description: "\u5173\u6389\u540E\u5B88\u536B\u4E0D\u518D\u62E6\u622A\uFF08plan / build \u5168\u653E\u884C\uFF09",
+      description: "\u5173\u6389\u540E plan / build \u76F4\u67E5\u4E0D\u518D\u62E6\u622A\uFF1Bassistant \u53EA\u8BFB\u6C99\u7BB1\u59CB\u7EC8\u751F\u6548",
       checked: true,
       onChange: (v2) => {
         if (draft) draft.enabled = v2;
-        mark();
+        markDirty();
       }
     });
+  }
+  function buildQuotaSettings(wrap) {
     tfWord = mountTextField(wrap, {
       label: "\u8C41\u514D\u8BCD",
       placeholder: "#nocap",
       value: "",
       onChange: (v2) => {
         if (draft) draft.exemptionWord = v2;
-        mark();
+        markDirty();
       }
     });
     tfPool = mountTextField(wrap, {
@@ -2103,7 +2119,7 @@ ${GUEST_UI_LOOK_CSS}`;
       value: "",
       onChange: (v2) => {
         if (draft) draft.poolPerRound = v2.trim() === "" ? NaN : Number(v2);
-        mark();
+        markDirty();
       }
     });
     const row = el2("div", "row3");
@@ -2113,7 +2129,7 @@ ${GUEST_UI_LOOK_CSS}`;
       value: "",
       onChange: (v2) => {
         if (draft) draft.read = v2.trim() === "" ? NaN : Number(v2);
-        mark();
+        markDirty();
       }
     });
     tfWeb = mountTextField(row, {
@@ -2121,7 +2137,7 @@ ${GUEST_UI_LOOK_CSS}`;
       value: "",
       onChange: (v2) => {
         if (draft) draft.web = v2.trim() === "" ? NaN : Number(v2);
-        mark();
+        markDirty();
       }
     });
     tfCmd = mountTextField(row, {
@@ -2129,7 +2145,7 @@ ${GUEST_UI_LOOK_CSS}`;
       value: "",
       onChange: (v2) => {
         if (draft) draft.command = v2.trim() === "" ? NaN : Number(v2);
-        mark();
+        markDirty();
       }
     });
     tfCap = mountTextField(wrap, {
@@ -2138,7 +2154,7 @@ ${GUEST_UI_LOOK_CSS}`;
       value: "",
       onChange: (v2) => {
         if (draft) draft.exemptionRoundCap = v2.trim() === "" ? NaN : Number(v2);
-        mark();
+        markDirty();
       }
     });
     const saveRow = el2("div", "save-row");
@@ -2158,23 +2174,36 @@ ${GUEST_UI_LOOK_CSS}`;
     exemptNoteEl = el2("div", "muted", "");
     wrap.append(exemptNoteEl);
   }
-  function renderStats(sessions, cfg) {
+  function rejectText(lr) {
+    const reason = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : "";
+    const tool = (lr.tool ?? "").slice(0, 40);
+    const head = tool && tool !== reason ? tool : "";
+    return `${head}${head && reason ? "\uFF08" : ""}${reason}${head && reason ? "\uFF09" : ""} ${fmtTime(lr.at ?? 0)}`.trim();
+  }
+  function renderStats(sessions, sandbox, cfg) {
     if (!statsEl) return;
     const s = sessionId ? sessions?.[sessionId] : void 0;
     const rejected = s?.rejected ?? 0;
     const dispatched = s?.dispatched ?? 0;
     const exempted = s?.exempted ?? 0;
     const lr = s?.lastReject ?? null;
-    let text = sessionId ? `\u672C\u4F1A\u8BDD\uFF1A\u62E6\u622A ${rejected} \xB7 \u6D3E\u5355 ${dispatched} \xB7 \u8C41\u514D ${exempted}` : "\u672C\u4F1A\u8BDD\uFF1A\u672A\u7ED1\u5B9A\u4F1A\u8BDD";
-    if (lr) {
-      const reason = lr.reason ? REASON_LABEL[lr.reason] ?? lr.reason : "";
-      text += ` \xB7 \u6700\u8FD1 ${lr.tool ?? ""}${reason ? `\uFF08${reason}\uFF09` : ""} ${fmtTime(lr.at ?? 0)}`;
-    }
+    let text = sessionId ? `\u672C\u4F1A\u8BDD\uFF1A\u76F4\u67E5\u62E6\u622A ${rejected} \xB7 \u6D3E\u5355 ${dispatched} \xB7 \u8C41\u514D ${exempted}` : "\u672C\u4F1A\u8BDD\uFF1A\u672A\u7ED1\u5B9A\u4F1A\u8BDD";
+    if (lr) text += ` \xB7 \u6700\u8FD1 ${rejectText(lr)}`;
     statsEl.textContent = text;
+    if (sandboxEl) {
+      const sbRejected = s?.sandboxRejects ?? 0;
+      const sbLast = s?.lastSandboxReject ?? null;
+      const state = sandbox ? sandbox.ok ? "\u6B63\u5E38" : "\u4E0D\u53EF\u7528" : "\u672A\u77E5";
+      let sb = `\u6C99\u7BB1\uFF1A${state}`;
+      if (sandbox?.at) sb += ` ${fmtTime(sandbox.at)}`;
+      sb += ` \xB7 \u62E6\u622A ${sbRejected}`;
+      if (sbLast) sb += ` \xB7 \u6700\u8FD1 ${rejectText(sbLast)}`;
+      sandboxEl.textContent = sb;
+    }
     if (!balanceEl) return;
     const used = s?.used ?? { read: 0, web: 0, command: 0 };
     const rem = (total, u) => `${Math.max(0, total - u)}/${total}`;
-    balanceEl.textContent = `\u4F59\u989D\uFF1A\u8BFB ${rem(cfg.sessionTotals.read, used.read)} \xB7 \u7F51 ${rem(cfg.sessionTotals.web, used.web)} \xB7 \u547D\u4EE4 ${rem(cfg.sessionTotals.command, used.command)} \xB7 \u8C41\u514D ${rem(cfg.exemptionRoundCap, exempted)}`;
+    balanceEl.textContent = `\u76F4\u67E5\u4F59\u989D\uFF1A\u8BFB ${rem(cfg.sessionTotals.read, used.read)} \xB7 \u7F51 ${rem(cfg.sessionTotals.web, used.web)} \xB7 \u547D\u4EE4 ${rem(cfg.sessionTotals.command, used.command)} \xB7 \u8C41\u514D ${rem(cfg.exemptionRoundCap, exempted)}`;
   }
   function applyConfig(cfg, force) {
     config = cfg;
@@ -2243,25 +2272,31 @@ ${GUEST_UI_LOOK_CSS}`;
       throw err;
     }
   }
+  function normReject(raw) {
+    const lr = raw ?? null;
+    if (!lr) return null;
+    return {
+      tool: typeof lr.tool === "string" ? lr.tool : void 0,
+      reason: typeof lr.reason === "string" ? lr.reason : void 0,
+      at: intOr(lr.at, 0)
+    };
+  }
   function normalizeSessionStats(raw) {
     const r = raw ?? {};
     const used = r.used ?? {};
-    const lr = r.lastReject ?? null;
     return {
       rejected: intOr(r.rejected, 0),
       dispatched: intOr(r.dispatched, 0),
       exempted: intOr(r.exempted, 0),
+      sandboxRejects: intOr(r.sandboxRejects, 0),
       used: {
         read: intOr(used.read, 0),
         web: intOr(used.web, 0),
         command: intOr(used.command, 0)
       },
       updatedAt: intOr(r.updatedAt, 0),
-      lastReject: lr ? {
-        tool: typeof lr.tool === "string" ? lr.tool : void 0,
-        reason: typeof lr.reason === "string" ? lr.reason : void 0,
-        at: intOr(lr.at, 0)
-      } : null
+      lastReject: normReject(r.lastReject),
+      lastSandboxReject: normReject(r.lastSandboxReject)
     };
   }
   async function readCountsFile() {
@@ -2273,9 +2308,10 @@ ${GUEST_UI_LOOK_CSS}`;
       if (sessions && typeof sessions === "object") {
         for (const [sid, rec] of Object.entries(sessions)) out[sid] = normalizeSessionStats(rec);
       }
-      return out;
+      const sb = raw?.sandbox;
+      return { sessions: out, sandbox: sb && typeof sb === "object" ? sb : null };
     } catch {
-      return {};
+      return { sessions: {}, sandbox: null };
     }
   }
   async function writeConfigFile(cfg) {
@@ -2286,14 +2322,14 @@ ${GUEST_UI_LOOK_CSS}`;
     if (!built || polling) return;
     polling = true;
     try {
-      const [cfgRes, sessions] = await Promise.all([readConfigFile(), readCountsFile()]);
+      const [cfgRes, counts] = await Promise.all([readConfigFile(), readCountsFile()]);
       if (cfgRes.missing) {
         setBanner("info", "\u8FD8\u6CA1\u6709\u914D\u7F6E\u6587\u4EF6", `\u4FDD\u5B58\u4E00\u6B21\u5373\u53EF\u521B\u5EFA ${CONFIG_PATH}\uFF08\u5F53\u524D\u663E\u793A\u9ED8\u8BA4\u503C\uFF09`);
       } else {
         clearBanner();
       }
       applyConfig(cfgRes.cfg, false);
-      renderStats(sessions, config);
+      renderStats(counts.sessions, counts.sandbox, config);
     } catch (err) {
       setBanner("warning", "\u8BFB\u914D\u7F6E\u5931\u8D25", `${errText(err)} \xB7 ${CONFIG_PATH}`);
     } finally {

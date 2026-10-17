@@ -6,7 +6,7 @@ OpenCode「assistant 子代理」三件套：让主代理把查证类工作稳�
 | --- | --- | --- |
 | `plugin/` | OpenCode 插件（守卫）：分类拦截 + 额度 + 豁免 + 计数 | ✅ v0.1（已实测） |
 | `SKILL/` | OpenCode skill：「assistant 派单工作流」 | ✅ 已落地（2026-10-16） |
-| `openchamber-extension/` | OpenChamber 扩展：设置面板 + 本会话守卫统计 | ✅ v0.2.2（2026-10-16；统计按会话 + 余额行；联动暂缓，等上游） |
+| `openchamber-extension/` | OpenChamber 扩展：设置面板 + 本会话守卫统计 | ✅ v0.2.3（2026-10-18；沙箱状态与拦截、直查额度分组；联动暂缓，等上游） |
 | `assistant-agent-prompt/` | assistant 子代理的定义文件：提示词 + 权限白名单 | ✅ 已落地（2026-10-17） |
 
 ## plugin/assistant.ts
@@ -26,7 +26,7 @@ OpenCode「assistant 子代理」三件套：让主代理把查证类工作稳�
 - 会话总额：读 30 / 网 10 / 命令 12；豁免词 `#nocap`（整轮豁免，上限 5 轮）
 - 计数落在 OpenCode plugin storage（按 sessionID，write-through，先自增占坑）；storage 与面板快照都按会话分片、落盘"先重读再取 max"（多实例并发写不互相覆盖）
 - 审计事件：`~/.config/opencode/assistant-events.jsonl`
-- 面板快照：`~/.config/opencode/assistant-counts.json`（v2：按会话分片，面板只显示绑定会话那一行 + 余额行）
+- 面板快照：`~/.config/opencode/assistant-counts.json`（v2：按会话分片 + 顶层 `sandbox` 探测状态；沙箱拦截记到子代理的父会话）
 - 配置：`~/.config/opencode/assistant.json`（示例见 `plugin/assistant.json.example`）
 
 安装：
@@ -43,7 +43,7 @@ install -m 0755 assistant-agent-prompt/dbq ~/.local/bin/dbq                     
 
 OpenChamber 扩展「assistant 守卫」（**纯面板，无后台服务**）：
 
-- **面板**：两行小字——`本会话：拦截 / 派单 / 豁免 + 最近一条拦截`、`余额：读 · 网 · 命令 · 豁免（剩余/上限）`；设置（总开关 / 豁免词 / 每轮池 / 会话总额 / 豁免轮次上限 + 本会话「整场放行」，按钮下方显示当前绑定会话）
+- **面板**：三行小字——`本会话：直查拦截 / 派单 / 豁免 + 最近一条直查拦截`、`沙箱：正常或不可用 / 拦截数 / 最近一条沙箱拦截`、`直查余额：读 · 网 · 命令 · 豁免（剩余/上限）`；设置分两块：assistant 沙箱（总开关）、plan 直查额度（豁免词 / 每轮池 / 会话总额 / 豁免轮次上限 + 本会话「整场放行」，按钮下方显示当前绑定会话）
 - 统计读 `~/.config/opencode/assistant-counts.json`（v2 按会话分片，5s 轮询）；设置直读直写 `assistant.json`（宿主 filesystem 能力）
 - **联动暂缓**（2026-10-16）：原生已有「子代理会话开在侧栏 chat 标签」的实现，但没有外部触发通道——等上游控制事件（详见 `openchamber-extension/README.md`）
 
