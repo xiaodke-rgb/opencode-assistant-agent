@@ -2,7 +2,7 @@
  * assistant 面板（纯设置 + 统计）
  *
  * - 头顶：本会话一行状态（直查拦截 / 派单 / 豁免 · 沙箱状态 + 时间），
- *   下面「插件拦截」「沙箱拦截」两个日志框（各最近 3 条）
+ *   下面「直查拦截」「assistant 拦截」两个日志框（各最近 3 条）
  * - 小节：直查余额（读/网/命令剩余 · 豁免剩余）、assistant 沙箱（总开关）、
  *   直查额度设置（plan 计读/网/命令，build 只计网；豁免词 / 每轮直查额度 /
  *   会话总额（读·网·命令）/ 豁免轮次上限 + 本会话「整场放行」），数据来自插件写的
@@ -210,10 +210,10 @@ function buildDom(): void {
   root.append(bannerWrap);
 
   const logs = el('div', 'logs');
-  logs.append(el('div', 'log-label', '插件拦截'));
+  logs.append(el('div', 'log-label', '直查拦截'));
   rejectBoxEl = el('div', 'log-box muted', '暂无');
   logs.append(rejectBoxEl);
-  logs.append(el('div', 'log-label', '沙箱拦截'));
+  logs.append(el('div', 'log-label', 'assistant 拦截'));
   sandboxBoxEl = el('div', 'log-box muted', '暂无');
   logs.append(sandboxBoxEl);
   root.append(logs);
