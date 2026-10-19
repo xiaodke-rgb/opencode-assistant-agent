@@ -227,7 +227,7 @@ function buildDom(): void {
   const sandboxSec = el('div', 'section');
   sandboxSec.append(
     el('div', 'section-title', 'assistant 沙箱'),
-    el('div', 'muted', '只影响 assistant 子代理的 shell；开关关掉后 plan / build 直查不再拦截，沙箱仍生效。'),
+    el('div', 'muted', '总开关；关掉后插件全部停止：plan / build 直查不拦，assistant 沙箱与拦截记录也停。'),
   );
   const sbWrap = el('div', 'settings');
   buildSandboxSettings(sbWrap);

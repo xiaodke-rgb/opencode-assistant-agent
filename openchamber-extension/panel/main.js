@@ -2083,7 +2083,7 @@ ${GUEST_UI_LOOK_CSS}`;
     const sandboxSec = el2("div", "section");
     sandboxSec.append(
       el2("div", "section-title", "assistant \u6C99\u7BB1"),
-      el2("div", "muted", "\u53EA\u5F71\u54CD assistant \u5B50\u4EE3\u7406\u7684 shell\uFF1B\u5F00\u5173\u5173\u6389\u540E plan / build \u76F4\u67E5\u4E0D\u518D\u62E6\u622A\uFF0C\u6C99\u7BB1\u4ECD\u751F\u6548\u3002")
+      el2("div", "muted", "\u603B\u5F00\u5173\uFF1B\u5173\u6389\u540E\u63D2\u4EF6\u5168\u90E8\u505C\u6B62\uFF1Aplan / build \u76F4\u67E5\u4E0D\u62E6\uFF0Cassistant \u6C99\u7BB1\u4E0E\u62E6\u622A\u8BB0\u5F55\u4E5F\u505C\u3002")
     );
     const sbWrap = el2("div", "settings");
     buildSandboxSettings(sbWrap);

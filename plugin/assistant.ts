@@ -850,6 +850,9 @@ async function onTool(event) {
     await loadDeps()
     await refreshConfig(false)
 
+    // 总开关：关掉后插件全部停止（直查拦截、assistant 沙箱、计数与拦截记录都不再写）。
+    if (!cfg.enabled) return
+
     const tool = String(event?.tool ?? "").toLowerCase()
     const sid = String(event?.sessionID ?? "")
     const agent = String(event?.agent ?? "")
@@ -899,9 +902,6 @@ async function onTool(event) {
       return
     }
     if (agent === "general") return
-
-    // 总开关只关 plan/build 直查守卫；assistant 的只读沙箱始终生效（关掉会裸奔）。
-    if (!cfg.enabled) return
 
     // 判定优先级：event.agent 直接决定；自定义主 agent 按 plan 守。
     let mode = null
