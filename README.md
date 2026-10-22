@@ -18,7 +18,7 @@ OpenCode「assistant 子代理」三件套：让主代理把查证类工作稳�
   - 直接拒（不占额度）：`grep`、`websearch`、日志类读取、大文件整读、含管道 / 重定向 / 解释器 / 命令替换的 shell、`curl`/`wget`
   - 施工类（npm / make / git push…）：拒绝并提示切 build
 - **build 场次**：只守「网」（`websearch` / `webfetch` / 浏览器工具），额度内放行、超限拒绝；其余工具完全不拦、不计数
-- **子会话**（`assistant` / `general` 等）：永不拦截
+- **子会话**：`assistant` 在只读沙箱内运行（只拦外部副作用 / `tail -f`）；`general` / `stock` 等其它子代理不拦
 - 被拦时返回引导文案「派 assistant 子代理」；同类连续拦截 3 次后文案收敛为「勿重试」
 
 计数与豁免：

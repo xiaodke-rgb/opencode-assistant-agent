@@ -2,7 +2,8 @@
 // Design doc: assistant-suite-plan.md §5.
 //   plan sessions  = every category is guarded (read/search/web/light commands + quota).
 //   build sessions = only web search/fetch is guarded (quota; over-limit -> reject + delegate).
-//   subagent sessions (agent=assistant/general/...) are never guarded.
+//   assistant subagent = read-only bwrap sandbox + external-side-effect denylist.
+//   other subagents (general/stock/...) are never guarded.
 // Rejection = throw; the message is returned to the model as the tool result.
 //
 // Files:
@@ -870,7 +871,7 @@ async function onTool(event) {
     }
 
     // assistant 子代理的 shell：只做「必拒品类」轻判并给出可执行文案，
-    // 其余放行（仍由原生权限白名单兜底）。general 等其它子代理一律放行。
+    // 其余放行（仍由原生权限白名单兜底）。general / stock 等其它子代理一律放行。
     if (agent === "assistant") {
       if (tool === "shell" || tool === "bash") {
         const raw = String(event?.input?.command ?? "")
@@ -901,7 +902,7 @@ async function onTool(event) {
       }
       return
     }
-    if (agent === "general") return
+    if (agent === "general" || agent === "stock") return
 
     // 判定优先级：event.agent 直接决定；自定义主 agent 按 plan 守。
     let mode = null
