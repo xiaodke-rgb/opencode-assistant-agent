@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// dbq — 只读 SQLite 查询助手（给 assistant 子代理等只读查证用）
+// dbq — 只读 SQLite 查询助手（给 scout 子代理等只读查证用）
 //
 // 用法：
 //   dbq [--db <路径>] [--limit N] [--pretty] [--tables] '<SQL>'

@@ -1,13 +1,13 @@
 /**
- * assistant 面板（纯设置 + 统计）
+ * scout 面板（纯设置 + 统计）
  *
  * - 头顶：本会话一行状态（直查拦截 / 派单 / 豁免 · 沙箱状态 + 时间），
- *   下面「直查拦截」「assistant 拦截」两个日志框（各最近 3 条）
- * - 小节：直查余额（读/网/命令剩余 · 豁免剩余）、assistant 沙箱（总开关）、
+ *   下面「直查拦截」「scout 拦截」两个日志框（各最近 3 条）
+ * - 小节：直查余额（读/网/命令剩余 · 豁免剩余）、scout 沙箱（总开关）、
  *   直查额度设置（plan 计读/网/命令，build 只计网；豁免词 / 每轮直查额度 /
  *   会话总额（读·网·命令）/ 豁免轮次上限 + 本会话「整场放行」），数据来自插件写的
- *   `~/.config/opencode/assistant-counts.json`（v2：按会话分片 + sandbox 状态）
- *   ——全部直接读写 `~/.config/opencode/assistant.json`
+ *   `~/.config/opencode/scout-counts.json`（v2：按会话分片 + sandbox 状态）
+ *   ——全部直接读写 `~/.config/opencode/scout.json`
  * - 无后台服务、无联动、无子代理列表：面板只用宿主的文件能力（filesystem）
  *
  * 面板折叠后仍挂载（宿主行为），所以统计会继续刷新（5s 一次，文件很小）。
@@ -28,8 +28,8 @@ import {
 const host = connectHost();
 const root = document.querySelector('#root') as HTMLElement;
 
-const CONFIG_PATH = '~/.config/opencode/assistant.json';
-const COUNTS_PATH = '~/.config/opencode/assistant-counts.json';
+const CONFIG_PATH = '~/.config/opencode/scout.json';
+const COUNTS_PATH = '~/.config/opencode/scout-counts.json';
 const POLL_MS = 5000;
 
 type Totals = { read: number; web: number; command: number };
@@ -201,7 +201,7 @@ function buildDom(): void {
   root.innerHTML = '';
 
   const hd = el('div', 'hd');
-  hd.append(el('h1', '', 'assistant 守卫'));
+  hd.append(el('h1', '', 'scout 守卫'));
   statsEl = el('div', 'stats muted', '本会话：统计加载中…');
   hd.append(statsEl);
   root.append(hd);
@@ -213,7 +213,7 @@ function buildDom(): void {
   logs.append(el('div', 'log-label', '直查拦截'));
   rejectBoxEl = el('div', 'log-box muted', '暂无');
   logs.append(rejectBoxEl);
-  logs.append(el('div', 'log-label', 'assistant 拦截'));
+  logs.append(el('div', 'log-label', 'scout 拦截'));
   sandboxBoxEl = el('div', 'log-box muted', '暂无');
   logs.append(sandboxBoxEl);
   root.append(logs);
@@ -226,8 +226,8 @@ function buildDom(): void {
 
   const sandboxSec = el('div', 'section');
   sandboxSec.append(
-    el('div', 'section-title', 'assistant 沙箱'),
-    el('div', 'muted', '总开关；关掉后插件全部停止：plan / build 直查不拦，assistant 沙箱与拦截记录也停。'),
+    el('div', 'section-title', 'scout 沙箱'),
+    el('div', 'muted', '总开关；关掉后插件全部停止：plan / build 直查不拦，scout 沙箱与拦截记录也停。'),
   );
   const sbWrap = el('div', 'settings');
   buildSandboxSettings(sbWrap);
@@ -592,7 +592,7 @@ async function save(): Promise<void> {
     await writeConfigFile(next);
     applyConfig(next, true);
     if (saveStateEl) saveStateEl.textContent = '已保存';
-    void host.toast({ kind: 'success', message: 'assistant 设置已保存' }).catch(() => {});
+    void host.toast({ kind: 'success', message: 'scout 设置已保存' }).catch(() => {});
   } catch (err) {
     if (saveStateEl) saveStateEl.textContent = `保存失败：${errText(err)}`;
   } finally {

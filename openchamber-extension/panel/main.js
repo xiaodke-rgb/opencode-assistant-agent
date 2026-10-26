@@ -1955,8 +1955,8 @@ ${GUEST_UI_LOOK_CSS}`;
   // panel/main.ts
   var host = connectHost();
   var root = document.querySelector("#root");
-  var CONFIG_PATH = "~/.config/opencode/assistant.json";
-  var COUNTS_PATH = "~/.config/opencode/assistant-counts.json";
+  var CONFIG_PATH = "~/.config/opencode/scout.json";
+  var COUNTS_PATH = "~/.config/opencode/scout-counts.json";
   var POLL_MS = 5e3;
   var DEFAULT_CONFIG = {
     enabled: true,
@@ -2061,7 +2061,7 @@ ${GUEST_UI_LOOK_CSS}`;
     built = true;
     root.innerHTML = "";
     const hd = el2("div", "hd");
-    hd.append(el2("h1", "", "assistant \u5B88\u536B"));
+    hd.append(el2("h1", "", "scout \u5B88\u536B"));
     statsEl = el2("div", "stats muted", "\u672C\u4F1A\u8BDD\uFF1A\u7EDF\u8BA1\u52A0\u8F7D\u4E2D\u2026");
     hd.append(statsEl);
     root.append(hd);
@@ -2071,7 +2071,7 @@ ${GUEST_UI_LOOK_CSS}`;
     logs.append(el2("div", "log-label", "\u76F4\u67E5\u62E6\u622A"));
     rejectBoxEl = el2("div", "log-box muted", "\u6682\u65E0");
     logs.append(rejectBoxEl);
-    logs.append(el2("div", "log-label", "assistant \u62E6\u622A"));
+    logs.append(el2("div", "log-label", "scout \u62E6\u622A"));
     sandboxBoxEl = el2("div", "log-box muted", "\u6682\u65E0");
     logs.append(sandboxBoxEl);
     root.append(logs);
@@ -2082,8 +2082,8 @@ ${GUEST_UI_LOOK_CSS}`;
     root.append(balanceSec);
     const sandboxSec = el2("div", "section");
     sandboxSec.append(
-      el2("div", "section-title", "assistant \u6C99\u7BB1"),
-      el2("div", "muted", "\u603B\u5F00\u5173\uFF1B\u5173\u6389\u540E\u63D2\u4EF6\u5168\u90E8\u505C\u6B62\uFF1Aplan / build \u76F4\u67E5\u4E0D\u62E6\uFF0Cassistant \u6C99\u7BB1\u4E0E\u62E6\u622A\u8BB0\u5F55\u4E5F\u505C\u3002")
+      el2("div", "section-title", "scout \u6C99\u7BB1"),
+      el2("div", "muted", "\u603B\u5F00\u5173\uFF1B\u5173\u6389\u540E\u63D2\u4EF6\u5168\u90E8\u505C\u6B62\uFF1Aplan / build \u76F4\u67E5\u4E0D\u62E6\uFF0Cscout \u6C99\u7BB1\u4E0E\u62E6\u622A\u8BB0\u5F55\u4E5F\u505C\u3002")
     );
     const sbWrap = el2("div", "settings");
     buildSandboxSettings(sbWrap);
@@ -2391,7 +2391,7 @@ ${GUEST_UI_LOOK_CSS}`;
       await writeConfigFile(next);
       applyConfig(next, true);
       if (saveStateEl) saveStateEl.textContent = "\u5DF2\u4FDD\u5B58";
-      void host.toast({ kind: "success", message: "assistant \u8BBE\u7F6E\u5DF2\u4FDD\u5B58" }).catch(() => {
+      void host.toast({ kind: "success", message: "scout \u8BBE\u7F6E\u5DF2\u4FDD\u5B58" }).catch(() => {
       });
     } catch (err) {
       if (saveStateEl) saveStateEl.textContent = `\u4FDD\u5B58\u5931\u8D25\uFF1A${errText(err)}`;

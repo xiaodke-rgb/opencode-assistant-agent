@@ -1,11 +1,11 @@
-// scanRedirects / assistantShellHardNo 单测（原生 redirect deny 已撤，这里是唯一闸门）。
-// 跑法：node --test plugin/assistant.test.mjs
+// scanRedirects / scoutShellHardNo 单测（原生 redirect deny 已撤，这里是唯一闸门）。
+// 跑法：node --test plugin/scout.test.mjs
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { assistantShellHardNo, sandboxWrap, sandboxDeny } from "./assistant.ts"
+import { scoutShellHardNo, sandboxWrap, sandboxDeny } from "./scout.ts"
 
-const allow = (c) => assert.equal(assistantShellHardNo(c), null, "应放行：" + c)
-const deny = (c) => assert.notEqual(assistantShellHardNo(c), null, "应拦截：" + c)
+const allow = (c) => assert.equal(scoutShellHardNo(c), null, "应放行：" + c)
+const deny = (c) => assert.notEqual(scoutShellHardNo(c), null, "应拦截：" + c)
 
 test("放行：合法只读写法与无害重定向", () => {
   for (const c of [

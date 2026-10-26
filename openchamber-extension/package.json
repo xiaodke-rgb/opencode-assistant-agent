@@ -1,8 +1,8 @@
 {
-  "name": "openchamber-assistant",
+  "name": "openchamber-scout",
   "version": "0.2.5",
   "private": true,
-  "description": "assistant 三件套 · OpenChamber 扩展：设置 + 守卫统计（面板直读配置文件，无后台服务）",
+  "description": "scout 三件套 · OpenChamber 扩展：设置 + 守卫统计（面板直读配置文件，无后台服务）",
   "scripts": {
     "build": "node build.mjs"
   },
@@ -19,15 +19,15 @@
     },
     "contributes": {
       "panel": {
-        "id": "assistant",
-        "name": "assistant 守卫",
+        "id": "scout",
+        "name": "scout 守卫",
         "icon": "icon.svg",
         "entry": "panel/index.html"
       },
       "capabilities": ["sessions"],
       "filesystem": [
-        "~/.config/opencode/assistant.json",
-        "~/.config/opencode/assistant-counts.json"
+        "~/.config/opencode/scout.json",
+        "~/.config/opencode/scout-counts.json"
       ],
       "attach": false
     }
