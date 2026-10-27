@@ -26,15 +26,16 @@ OpenCode「scout 子代理」三件套：让主代理把查证类工作稳定交
 
 - 会话总额：读 30 / 网 10 / 命令 12；豁免词 `#nocap`（整轮豁免，上限 5 轮）
 - 计数落在 OpenCode plugin storage（按 sessionID，write-through，先自增占坑）；storage 与面板快照都按会话分片、落盘"先重读再取 max"（多实例并发写不互相覆盖）
-- 审计事件：`~/.config/opencode/scout-events.jsonl`
-- 面板快照：`~/.config/opencode/scout-counts.json`（v2：按会话分片 + 顶层 `sandbox` 探测状态；直查/沙箱各留最近 5 条拦截；沙箱拦截记到子代理的父会话）
-- 配置：`~/.config/opencode/scout.json`（示例见 `plugin/scout.json.example`）
+- 审计事件：`~/.local/share/opencode/plugin-data/scout/scout-events.jsonl`
+- 面板快照：`~/.local/share/opencode/plugin-data/scout/scout-counts.json`（v2：按会话分片 + 顶层 `sandbox` 探测状态；直查/沙箱各留最近 5 条拦截；沙箱拦截记到子代理的父会话）
+- 配置：`~/.local/share/opencode/plugin-data/scout/scout.json`（示例见 `plugin/scout.json.example`）
 
 安装：
 
 ```sh
 cp plugin/scout.ts ~/.config/opencode/plugins/
-cp plugin/scout.json.example ~/.config/opencode/scout.json   # 可选
+mkdir -p ~/.local/share/opencode/plugin-data/scout
+cp plugin/scout.json.example ~/.local/share/opencode/plugin-data/scout/scout.json   # 可选
 cp -r SKILL/scout ~/.config/opencode/skills/                     # skill，id: scout
 cp scout-agent-prompt/scout.md ~/.config/opencode/agents/scout.md   # 子代理定义（提示词 + 权限白名单）
 install -m 0755 scout-agent-prompt/dbq ~/.local/bin/dbq                      # 可选：只读 SQLite 助手（node 脚本）
@@ -45,7 +46,7 @@ install -m 0755 scout-agent-prompt/dbq ~/.local/bin/dbq                      # �
 OpenChamber 扩展「scout 守卫」（**纯面板，无后台服务**）：
 
 - **面板**：头部一行本会话状态（直查拦截 / 派单 / 豁免 · 沙箱正常与否）+ 两个日志框（直查拦截、scout 拦截，各最近 3 条）+「直查余额」小节（读 · 网 · 命令 · 豁免）；设置分两块：scout 沙箱（总开关）、直查额度设置（plan 计读/网/命令，build 只计网；豁免词 / 每轮池 / 会话总额 / 豁免轮次上限 + 本会话「整场放行」，按钮下方显示当前绑定会话）
-- 统计读 `~/.config/opencode/scout-counts.json`（v2 按会话分片，5s 轮询）；设置直读直写 `scout.json`（宿主 filesystem 能力）
+- 统计读 `~/.local/share/opencode/plugin-data/scout/scout-counts.json`（v2 按会话分片，5s 轮询）；设置直读直写 `scout.json`（宿主 filesystem 能力）
 - **联动暂缓**（2026-10-16）：原生已有「子代理会话开在侧栏 chat 标签」的实现，但没有外部触发通道——等上游控制事件（详见 `openchamber-extension/README.md`）
 
 安装：OpenChamber → 设置 → 扩展 →「添加」，粘贴本仓库 `openchamber-extension` 目录的本地路径，批准 `sessions` + `filesystem` 两项能力。

@@ -26,8 +26,8 @@
       },
       "capabilities": ["sessions"],
       "filesystem": [
-        "~/.config/opencode/scout.json",
-        "~/.config/opencode/scout-counts.json"
+        "~/.local/share/opencode/plugin-data/scout/scout.json",
+        "~/.local/share/opencode/plugin-data/scout/scout-counts.json"
       ],
       "attach": false
     }

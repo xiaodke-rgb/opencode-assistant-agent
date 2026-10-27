@@ -6,20 +6,30 @@
 //   other subagents (general/stock/...) are never guarded.
 // Rejection = throw; the message is returned to the model as the tool result.
 //
-// Files:
-//   ~/.config/opencode/scout.json          — shared config (extension writes; plugin reads)
-//   ~/.config/opencode/scout-events.jsonl  — audit events (boot/reject/dispatch/exempt/warn)
-//   ~/.config/opencode/scout-counts.json   — per-session counters, v2 (panel polls)
+// Files (runtime data lives outside the watched config dir):
+//   ~/.local/share/opencode/plugin-data/scout/scout.json          — shared config (extension writes; plugin reads)
+//   ~/.local/share/opencode/plugin-data/scout/scout-events.jsonl  — audit events (boot/reject/dispatch/exempt/warn)
+//   ~/.local/share/opencode/plugin-data/scout/scout-counts.json   — per-session counters, v2 (panel polls)
 //   ctx.storage key: scout:session:<id>    — durable per-session counters
 //
 // Counts flush is merge-based: re-read the file, take the max of every counter and the
 // newest lastReject — so a second plugin instance can never overwrite newer values with
 // its stale in-memory snapshot.
 
-const HOME = process.env.HOME || "."
-const CONFIG_PATH = HOME + "/.config/opencode/scout.json"
-const EVENTS_PATH = HOME + "/.config/opencode/scout-events.jsonl"
-const COUNTS_PATH = HOME + "/.config/opencode/scout-counts.json"
+import { mkdirSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
+
+const DATA_DIR = join(homedir(), ".local", "share", "opencode", "plugin-data", "scout")
+const CONFIG_PATH = join(DATA_DIR, "scout.json")
+const EVENTS_PATH = join(DATA_DIR, "scout-events.jsonl")
+const COUNTS_PATH = join(DATA_DIR, "scout-counts.json")
+
+function ensureDataDir() {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true })
+  } catch {}
+}
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -199,6 +209,7 @@ function persist(r) {
 }
 
 function logEvent(kind, fields) {
+  ensureDataDir()
   try {
     const line = JSON.stringify({ t: Date.now(), kind, ...fields }) + "\n"
     fsP.appendFile(EVENTS_PATH, line).catch(() => {})
@@ -297,6 +308,7 @@ async function flushCounts() {
   flushing = true
   let wrote = false
   try {
+    ensureDataDir()
     await loadDeps()
     let sessions = {}
     try {
@@ -745,7 +757,7 @@ function shq(s) {
 
 function sandboxWrap(cmd) {
   const parts = ["bwrap", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
-  for (const p of [HOME + "/.cache", HOME + "/.local/state", HOME + "/.npm"]) {
+  for (const p of [homedir() + "/.cache", homedir() + "/.local/state", homedir() + "/.npm"]) {
     try { if (fsM && fsM.existsSync(p)) parts.push("--tmpfs", p) } catch {}
   }
   parts.push("--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup", "--share-net", "--", "/bin/bash", "-c")

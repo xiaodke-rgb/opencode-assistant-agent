@@ -1955,8 +1955,8 @@ ${GUEST_UI_LOOK_CSS}`;
   // panel/main.ts
   var host = connectHost();
   var root = document.querySelector("#root");
-  var CONFIG_PATH = "~/.config/opencode/scout.json";
-  var COUNTS_PATH = "~/.config/opencode/scout-counts.json";
+  var CONFIG_PATH = "~/.local/share/opencode/plugin-data/scout/scout.json";
+  var COUNTS_PATH = "~/.local/share/opencode/plugin-data/scout/scout-counts.json";
   var POLL_MS = 5e3;
   var DEFAULT_CONFIG = {
     enabled: true,

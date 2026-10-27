@@ -6,8 +6,8 @@
  * - 小节：直查余额（读/网/命令剩余 · 豁免剩余）、scout 沙箱（总开关）、
  *   直查额度设置（plan 计读/网/命令，build 只计网；豁免词 / 每轮直查额度 /
  *   会话总额（读·网·命令）/ 豁免轮次上限 + 本会话「整场放行」），数据来自插件写的
- *   `~/.config/opencode/scout-counts.json`（v2：按会话分片 + sandbox 状态）
- *   ——全部直接读写 `~/.config/opencode/scout.json`
+ *   `~/.local/share/opencode/plugin-data/scout/scout-counts.json`（v2：按会话分片 + sandbox 状态）
+ *   ——全部直接读写 `~/.local/share/opencode/plugin-data/scout/scout.json`
  * - 无后台服务、无联动、无子代理列表：面板只用宿主的文件能力（filesystem）
  *
  * 面板折叠后仍挂载（宿主行为），所以统计会继续刷新（5s 一次，文件很小）。
@@ -28,8 +28,8 @@ import {
 const host = connectHost();
 const root = document.querySelector('#root') as HTMLElement;
 
-const CONFIG_PATH = '~/.config/opencode/scout.json';
-const COUNTS_PATH = '~/.config/opencode/scout-counts.json';
+const CONFIG_PATH = '~/.local/share/opencode/plugin-data/scout/scout.json';
+const COUNTS_PATH = '~/.local/share/opencode/plugin-data/scout/scout-counts.json';
 const POLL_MS = 5000;
 
 type Totals = { read: number; web: number; command: number };
