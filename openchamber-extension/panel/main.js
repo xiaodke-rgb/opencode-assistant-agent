@@ -1703,6 +1703,11 @@ ${GUEST_UI_LOOK_CSS}`;
 
   // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/dom.js
   var STYLE_ID = "oc-sdk-ui-style";
+  var clearNode = (node) => {
+    while (node.firstChild) {
+      node.removeChild(node.firstChild);
+    }
+  };
   var ensureStyle = (css) => {
     const existing = document.getElementById(STYLE_ID);
     if (existing instanceof HTMLStyleElement) {
@@ -1741,6 +1746,18 @@ ${GUEST_UI_LOOK_CSS}`;
     } else if (node.getAttribute(name) !== value) {
       node.setAttribute(name, value);
     }
+  };
+  var onOutsideClick = (node, handler) => {
+    const listener = (event) => {
+      if (event.target instanceof Node && node.contains(event.target)) {
+        return;
+      }
+      handler();
+    };
+    document.addEventListener("pointerdown", listener, true);
+    return () => {
+      document.removeEventListener("pointerdown", listener, true);
+    };
   };
 
   // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/button.js
@@ -1863,6 +1880,277 @@ ${GUEST_UI_LOOK_CSS}`;
     return node;
   };
 
+  // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/navigation.js
+  var navigationKey = (event, axis = "vertical") => {
+    const [next, previous] = axis === "vertical" ? ["ArrowDown", "ArrowUp"] : ["ArrowRight", "ArrowLeft"];
+    if (event.key === next || event.ctrlKey && event.key.toLowerCase() === "n")
+      return "next";
+    if (event.key === previous || event.ctrlKey && event.key.toLowerCase() === "p")
+      return "previous";
+    if (event.key === "Home")
+      return "first";
+    if (event.key === "End")
+      return "last";
+    return null;
+  };
+  var moveListSelection = (items, currentId, key) => {
+    const enabled = items.filter((item) => !item.disabled);
+    if (enabled.length === 0) {
+      return null;
+    }
+    const first = enabled[0];
+    const last = enabled[enabled.length - 1];
+    if (key === "first" || !first || !last) {
+      return first?.id ?? null;
+    }
+    if (key === "last") {
+      return last.id;
+    }
+    const index = enabled.findIndex((item) => item.id === currentId);
+    if (index === -1) {
+      return key === "next" ? first.id : last.id;
+    }
+    const target = enabled[Math.min(enabled.length - 1, Math.max(0, index + (key === "next" ? 1 : -1)))];
+    return target?.id ?? null;
+  };
+
+  // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/option.js
+  var optionId = (uid, id) => `${uid}-${id ?? ""}`;
+  var createOption = (uid, role, spec, on) => {
+    const node = button("oc-sdk-option");
+    node.id = optionId(uid, spec.id);
+    node.setAttribute("role", role);
+    node.tabIndex = -1;
+    node.disabled = Boolean(spec.disabled);
+    if (role === "option") {
+      node.setAttribute("aria-selected", spec.selected ? "true" : "false");
+    }
+    node.dataset.destructive = spec.destructive ? "true" : "false";
+    const label = el("span", "oc-sdk-option-label");
+    label.textContent = spec.label;
+    node.append(label);
+    if (spec.hint) {
+      const hint = el("span", "oc-sdk-option-hint");
+      hint.textContent = spec.hint;
+      node.append(hint);
+    }
+    if (role === "option") {
+      node.dataset.mark = "check";
+      const check = el("span", "oc-sdk-option-check");
+      check.append(icon("check", 14));
+      node.append(check);
+    }
+    node.addEventListener("pointerenter", on.hover);
+    node.addEventListener("click", on.pick);
+    return node;
+  };
+  var highlightOption = (container, focusOwner, uid, id) => {
+    const target = optionId(uid, id);
+    for (const child of Array.from(container.children)) {
+      if (child instanceof HTMLElement && child.classList.contains("oc-sdk-option")) {
+        child.dataset.active = child.id === target ? "true" : "false";
+      }
+    }
+    setAttr(focusOwner, "aria-activedescendant", id ? target : null);
+    container.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
+  };
+
+  // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/popup.js
+  var placePopup = (popup, trigger) => {
+    const rect = trigger.getBoundingClientRect();
+    popup.style.minWidth = `${Math.round(rect.width)}px`;
+    popup.style.left = `${Math.round(rect.left)}px`;
+    popup.style.top = `${Math.round(rect.bottom + 4)}px`;
+    const height = popup.offsetHeight;
+    const roomBelow = window.innerHeight - rect.bottom - 8;
+    if (height > roomBelow && rect.top - 8 > roomBelow) {
+      popup.style.top = `${Math.max(8, Math.round(rect.top - 4 - height))}px`;
+    }
+    const overflow = rect.left + popup.offsetWidth - window.innerWidth + 8;
+    if (overflow > 0) {
+      popup.style.left = `${Math.max(8, Math.round(rect.left - overflow))}px`;
+    }
+  };
+  var openPopup = (host2, trigger, popup, close) => {
+    host2.append(popup);
+    placePopup(popup, trigger);
+    const stopOutside = onOutsideClick(host2, close);
+    const onResize = () => {
+      close();
+    };
+    const onScroll = (event) => {
+      if (event.target instanceof Node && popup.contains(event.target)) {
+        return;
+      }
+      close();
+    };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      stopOutside();
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onScroll, true);
+      popup.remove();
+    };
+  };
+
+  // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/select.js
+  var filterSelectOptions = (options, query) => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return [...options];
+    }
+    return options.filter((option) => option.label.toLowerCase().includes(needle) || option.id.toLowerCase().includes(needle));
+  };
+  var selectCount = 0;
+  var mountSelect = (root2, initial) => {
+    ensureStyle(UI_CSS);
+    let props = initial;
+    const uid = `oc-sdk-select-${selectCount += 1}`;
+    const wrap = el("div", "oc-sdk oc-sdk-select");
+    const caption = el("span", "oc-sdk-field-label");
+    caption.id = `${uid}-label`;
+    const trigger = button("oc-sdk-trigger");
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-labelledby", caption.id);
+    const value = el("span", "oc-sdk-trigger-value");
+    trigger.append(value, icon("chevron", 14, "oc-sdk-trigger-chevron"));
+    wrap.append(caption, trigger);
+    root2.append(wrap);
+    let query = "";
+    let activeId = null;
+    let closePopup = null;
+    const popup = el("div", "oc-sdk oc-sdk-popup");
+    const searchSlot = el("div", "oc-sdk-popup-search");
+    const search = el("input", "oc-sdk-input");
+    search.type = "text";
+    search.autocomplete = "off";
+    searchSlot.append(search);
+    const listbox = el("div");
+    listbox.setAttribute("role", "listbox");
+    listbox.tabIndex = -1;
+    popup.append(listbox);
+    const visible = () => filterSelectOptions(props.options, props.searchable ? query : "");
+    const focusOwner = () => props.searchable ? search : listbox;
+    const setActive = (id) => {
+      activeId = id;
+      highlightOption(listbox, focusOwner(), uid, id);
+    };
+    const paintOptions = () => {
+      clearNode(listbox);
+      const options = visible();
+      if (options.length === 0) {
+        const empty = el("div", "oc-sdk-popup-empty");
+        empty.textContent = "No matches";
+        listbox.append(empty);
+      }
+      for (const option of options) {
+        listbox.append(createOption(uid, "option", { ...option, selected: option.id === props.value }, {
+          hover: () => setActive(option.id),
+          pick: () => pick(option.id)
+        }));
+      }
+      setActive(options.some((option) => option.id === activeId) ? activeId : options[0]?.id ?? null);
+    };
+    const close = () => {
+      const dispose = closePopup;
+      closePopup = null;
+      dispose?.();
+      query = "";
+      search.value = "";
+      trigger.setAttribute("aria-expanded", "false");
+    };
+    const open = () => {
+      if (closePopup || props.disabled) {
+        return;
+      }
+      activeId = props.value;
+      search.placeholder = props.searchPlaceholder ?? "Search";
+      if (props.searchable)
+        popup.prepend(searchSlot);
+      else
+        searchSlot.remove();
+      paintOptions();
+      closePopup = openPopup(wrap, trigger, popup, close);
+      trigger.setAttribute("aria-expanded", "true");
+      focusOwner().focus();
+    };
+    const pick = (id) => {
+      close();
+      trigger.focus();
+      if (id !== props.value)
+        props.onChange(id);
+    };
+    const onTriggerClick = () => {
+      if (closePopup)
+        close();
+      else
+        open();
+    };
+    const onTriggerKey = (event) => {
+      if (!closePopup && navigationKey(event)) {
+        event.preventDefault();
+        open();
+      }
+    };
+    const onPopupKey = (event) => {
+      const step = navigationKey(event);
+      if (step) {
+        event.preventDefault();
+        setActive(moveListSelection(visible(), activeId, step));
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        if (activeId)
+          pick(activeId);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        trigger.focus();
+      } else if (props.searchable && event.target !== search && event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+        search.focus();
+      }
+    };
+    const onSearchInput = () => {
+      query = search.value;
+      paintOptions();
+    };
+    const onFocusOut = (event) => {
+      if (closePopup && !(event.relatedTarget instanceof Node && wrap.contains(event.relatedTarget)))
+        close();
+    };
+    const paint = () => {
+      setText(caption, props.label);
+      caption.hidden = !props.label;
+      const current = props.options.find((option) => option.id === props.value);
+      setText(value, current?.label ?? props.placeholder ?? "Select");
+      value.dataset.empty = current ? "false" : "true";
+      trigger.disabled = Boolean(props.disabled);
+      if (closePopup)
+        paintOptions();
+    };
+    trigger.addEventListener("click", onTriggerClick);
+    trigger.addEventListener("keydown", onTriggerKey);
+    popup.addEventListener("keydown", onPopupKey);
+    search.addEventListener("input", onSearchInput);
+    wrap.addEventListener("focusout", onFocusOut);
+    paint();
+    return {
+      update: (next) => {
+        props = { ...props, ...next };
+        paint();
+      },
+      dispose: () => {
+        close();
+        trigger.removeEventListener("click", onTriggerClick);
+        trigger.removeEventListener("keydown", onTriggerKey);
+        popup.removeEventListener("keydown", onPopupKey);
+        search.removeEventListener("input", onSearchInput);
+        wrap.removeEventListener("focusout", onFocusOut);
+        wrap.remove();
+      }
+    };
+  };
+
   // ../../../../../home/xiaodke/.config/openchamber/extensions/session-usage/node_modules/@openchamber/sdk/dist/ui/checkbox.js
   var mountToggle = (root2, initial, role) => {
     ensureStyle(UI_CSS);
@@ -1957,6 +2245,7 @@ ${GUEST_UI_LOOK_CSS}`;
   var root = document.querySelector("#root");
   var CONFIG_PATH = "~/.local/share/opencode/plugin-data/scout/scout.json";
   var COUNTS_PATH = "~/.local/share/opencode/plugin-data/scout/scout-counts.json";
+  var MODELS_PATH = "~/.local/share/opencode/plugin-data/enhanced-prompt-card/models.json";
   var POLL_MS = 5e3;
   var DEFAULT_CONFIG = {
     enabled: true,
@@ -1964,7 +2253,8 @@ ${GUEST_UI_LOOK_CSS}`;
     poolPerRound: 3,
     sessionTotals: { read: 30, web: 10, command: 12 },
     exemptionRoundCap: 5,
-    exemptSessions: {}
+    exemptSessions: {},
+    cheapModels: []
   };
   var REASON_LABEL = {
     direct: "\u76F4\u63A5\u62D2",
@@ -2012,6 +2302,14 @@ ${GUEST_UI_LOOK_CSS}`;
     for (const [k, v2] of Object.entries(exemptIn)) {
       if (v2 === true && /^[A-Za-z0-9_-]{1,80}$/.test(k)) exempt[k] = true;
     }
+    const cheapIn = Array.isArray(r.cheapModels) ? r.cheapModels : [];
+    const cheapModels = [];
+    for (const item of cheapIn) {
+      const text = typeof item === "string" ? item.trim() : "";
+      if (!text || text.length > 80 || cheapModels.includes(text)) continue;
+      cheapModels.push(text);
+      if (cheapModels.length >= 100) break;
+    }
     return {
       enabled: typeof r.enabled === "boolean" ? r.enabled : d.enabled,
       exemptionWord: typeof r.exemptionWord === "string" && r.exemptionWord.trim() ? r.exemptionWord : d.exemptionWord,
@@ -2022,7 +2320,8 @@ ${GUEST_UI_LOOK_CSS}`;
         command: intOr(totals.command, d.sessionTotals.command)
       },
       exemptionRoundCap: intOr(r.exemptionRoundCap, d.exemptionRoundCap),
-      exemptSessions: exempt
+      exemptSessions: exempt,
+      cheapModels
     };
   }
   var statsEl;
@@ -2043,6 +2342,11 @@ ${GUEST_UI_LOOK_CSS}`;
   var tfWeb = null;
   var tfCmd = null;
   var tfCap = null;
+  var tfModels = null;
+  var selModel = null;
+  var modelChipsEl = null;
+  var modelCatalog = [];
+  var catalogLoaded = false;
   function setBanner(tone2, title, body) {
     const key = `${tone2}|${title}|${body}`;
     if (bannerHandle && bannerText === key) return;
@@ -2104,6 +2408,74 @@ ${GUEST_UI_LOOK_CSS}`;
     dirty = true;
     saveBtn?.update({ disabled: false });
     if (saveStateEl) saveStateEl.textContent = "\u6709\u672A\u4FDD\u5B58\u66F4\u6539";
+  }
+  function parseModelList(raw) {
+    const out = [];
+    for (const part of raw.split(/[,，\n]/)) {
+      const text = part.trim();
+      if (!text || text.length > 80 || out.includes(text)) continue;
+      out.push(text);
+      if (out.length >= 100) break;
+    }
+    return out;
+  }
+  function renderModelChips(list) {
+    if (!modelChipsEl) return;
+    modelChipsEl.textContent = "";
+    if (!list.length) {
+      modelChipsEl.append(el2("span", "muted", "\u672A\u8BBE\u7F6E\uFF1A\u6240\u6709\u6A21\u578B\u90FD\u6309\u73B0\u6709\u89C4\u5219\u62E6\u622A"));
+      return;
+    }
+    for (const m of list) {
+      const chip = el2("span", "model-chip", m);
+      const x = document.createElement("button");
+      x.className = "model-chip-x";
+      x.textContent = "\xD7";
+      x.type = "button";
+      x.title = "\u79FB\u9664";
+      x.addEventListener("click", () => {
+        if (!draft) return;
+        draft.cheapModels = draft.cheapModels.filter((v2) => v2 !== m);
+        renderModelChips(draft.cheapModels);
+        tfModels?.update({ value: draft.cheapModels.join("\n") });
+        markDirty();
+      });
+      chip.append(x);
+      modelChipsEl.append(chip);
+    }
+  }
+  async function loadModelCatalog() {
+    if (catalogLoaded) return;
+    catalogLoaded = true;
+    try {
+      const res = await host.readFile(MODELS_PATH);
+      const j = JSON.parse(res.content);
+      const list = Array.isArray(j?.models) ? j.models : [];
+      const out = [];
+      for (const item of list) {
+        const m = item ?? {};
+        const id = typeof m.id === "string" ? m.id.trim() : "";
+        if (!id || out.some((x) => x.id === id)) continue;
+        out.push({
+          id,
+          name: typeof m.name === "string" ? m.name : void 0,
+          providerName: typeof m.providerName === "string" ? m.providerName : void 0
+        });
+      }
+      out.sort((a, b) => a.id.localeCompare(b.id));
+      modelCatalog = out;
+    } catch {
+      modelCatalog = [];
+    }
+    applyModelOptions();
+  }
+  function applyModelOptions() {
+    if (!selModel) return;
+    selModel.update({
+      options: modelCatalog.map((m) => ({ id: m.id, label: m.name && m.name !== m.id ? m.name : m.id, hint: m.providerName })),
+      disabled: modelCatalog.length === 0,
+      placeholder: modelCatalog.length ? "\u641C\u7D22 provider/model" : "\u6A21\u578B\u76EE\u5F55\u672A\u52A0\u8F7D"
+    });
   }
   function buildSandboxSettings(wrap) {
     swEnabled = mountSwitch(wrap, {
@@ -2170,6 +2542,41 @@ ${GUEST_UI_LOOK_CSS}`;
         markDirty();
       }
     });
+    modelChipsEl = el2("div", "model-chips");
+    wrap.append(modelChipsEl);
+    const pickRow = el2("div", "save-row");
+    wrap.append(pickRow);
+    selModel = mountSelect(pickRow, {
+      label: "\u6DFB\u52A0\u6A21\u578B",
+      value: null,
+      options: [],
+      placeholder: modelCatalog.length ? "\u641C\u7D22 provider/model" : "\u6A21\u578B\u76EE\u5F55\u672A\u52A0\u8F7D",
+      searchable: true,
+      searchPlaceholder: "\u641C\u7D22 provider/model",
+      disabled: true,
+      onChange: (id) => {
+        if (!id || !draft) return;
+        if (!draft.cheapModels.includes(id)) draft.cheapModels.push(id);
+        renderModelChips(draft.cheapModels);
+        tfModels?.update({ value: draft.cheapModels.join("\n") });
+        selModel?.update({ value: null });
+        markDirty();
+      }
+    });
+    tfModels = mountTextField(wrap, {
+      label: "\u653E\u884C\u7684\u6A21\u578B\uFF08\u4E0D\u62E6\u622A\uFF09",
+      helper: "\u9017\u53F7\u6216\u6362\u884C\u5206\u9694\uFF1B\u652F\u6301 provider/model \u5168\u91CF\u3001\u4EC5\u6A21\u578B\u540D\u5C3E\u6BB5\u5339\u914D\u3001* \u901A\u914D\u3002\u7559\u7A7A = \u5168\u90E8\u53D7\u63A7",
+      placeholder: "deepseek-flash, *free*",
+      value: "",
+      multiline: true,
+      rows: 3,
+      mono: true,
+      onChange: (v2) => {
+        if (draft) draft.cheapModels = parseModelList(v2);
+        renderModelChips(draft?.cheapModels ?? []);
+        markDirty();
+      }
+    });
     const saveRow = el2("div", "save-row");
     saveBtn = mountButton(saveRow, { label: "\u4FDD\u5B58", variant: "default", disabled: true, onClick: () => void save() });
     saveStateEl = el2("span", "save-state", "");
@@ -2212,7 +2619,9 @@ ${GUEST_UI_LOOK_CSS}`;
     const exempted = s?.exempted ?? 0;
     const state = sandbox ? sandbox.ok ? "\u6B63\u5E38" : "\u4E0D\u53EF\u7528" : "\u672A\u77E5";
     const at = sandbox?.at ? ` ${fmtTime(sandbox.at)}` : "";
-    statsEl.textContent = sessionId ? `\u672C\u4F1A\u8BDD\uFF1A\u76F4\u67E5\u62E6\u622A ${rejected} \xB7 \u6D3E\u5355 ${dispatched} \xB7 \u8C41\u514D ${exempted} \xB7 \u6C99\u7BB1\uFF1A${state}${at}` : "\u672C\u4F1A\u8BDD\uFF1A\u672A\u7ED1\u5B9A\u4F1A\u8BDD";
+    const model = (s?.model ?? "").trim();
+    const modelNote = model ? ` \xB7 \u6A21\u578B ${model}${s?.cheap ? "\uFF08\u5DF2\u653E\u884C\uFF09" : ""}` : "";
+    statsEl.textContent = sessionId ? `\u672C\u4F1A\u8BDD\uFF1A\u76F4\u67E5\u62E6\u622A ${rejected} \xB7 \u6D3E\u5355 ${dispatched} \xB7 \u8C41\u514D ${exempted} \xB7 \u6C99\u7BB1\uFF1A${state}${at}${modelNote}` : "\u672C\u4F1A\u8BDD\uFF1A\u672A\u7ED1\u5B9A\u4F1A\u8BDD";
     renderLogBox(rejectBoxEl, s?.recentRejects ?? [], s?.lastReject ?? null);
     renderLogBox(sandboxBoxEl, s?.recentSandboxRejects ?? [], s?.lastSandboxReject ?? null);
     if (!balanceEl) return;
@@ -2239,6 +2648,8 @@ ${GUEST_UI_LOOK_CSS}`;
     tfWeb?.update({ value: String(d.web) });
     tfCmd?.update({ value: String(d.command) });
     tfCap?.update({ value: String(d.exemptionRoundCap) });
+    tfModels?.update({ value: d.cheapModels.join("\n") });
+    renderModelChips(d.cheapModels);
     if (force) dirty = false;
     saveBtn?.update({ disabled: !dirty });
     if (!dirty && saveStateEl) saveStateEl.textContent = "";
@@ -2252,7 +2663,8 @@ ${GUEST_UI_LOOK_CSS}`;
       read: cfg.sessionTotals.read,
       web: cfg.sessionTotals.web,
       command: cfg.sessionTotals.command,
-      exemptionRoundCap: cfg.exemptionRoundCap
+      exemptionRoundCap: cfg.exemptionRoundCap,
+      cheapModels: [...cfg.cheapModels]
     };
   }
   function sessionLabel() {
@@ -2318,6 +2730,8 @@ ${GUEST_UI_LOOK_CSS}`;
         web: intOr(used.web, 0),
         command: intOr(used.command, 0)
       },
+      model: typeof r.model === "string" ? r.model : "",
+      cheap: r.cheap === true,
       updatedAt: intOr(r.updatedAt, 0),
       lastReject: normReject(r.lastReject),
       lastSandboxReject: normReject(r.lastSandboxReject),
@@ -2386,7 +2800,8 @@ ${GUEST_UI_LOOK_CSS}`;
         poolPerRound: d.poolPerRound,
         sessionTotals: { read: d.read, web: d.web, command: d.command },
         exemptionRoundCap: d.exemptionRoundCap,
-        exemptSessions: config.exemptSessions
+        exemptSessions: config.exemptSessions,
+        cheapModels: [...d.cheapModels]
       };
       await writeConfigFile(next);
       applyConfig(next, true);
@@ -2429,6 +2844,7 @@ ${GUEST_UI_LOOK_CSS}`;
     applyHostReady(ctx, document.documentElement);
     buildDom();
     attachSession(ctx.session?.id ?? null, ctx.session?.title ?? null);
+    void loadModelCatalog();
     void poll();
   });
   host.onSession((snapshot) => {

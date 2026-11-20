@@ -38,6 +38,9 @@ const DEFAULT_CONFIG = {
   poolPerRound: 3,
   sessionTotals: { read: 30, web: 10, command: 12 },
   exemptionRoundCap: 5,
+  // 放行的模型（成本档）：命中的模型完全不拦、不计数。空 = 关闭这一层。
+  // 支持三种写法：`provider/model` 全量、`model` 只比对尾段、含 `*` 通配。
+  cheapModels: [],
 }
 
 const BIG_FILE = 30 * 1024
@@ -94,6 +97,7 @@ const S = {
   dirtyCounts: new Set(), // sids with counter changes waiting to be merged into the counts file
   cfgWarned: 0,
   sandbox: null, // { ok, at } 最近一次 bwrap 探测结果（写入 counts 文件供面板显示）
+  models: new Map(), // sid -> model（来自 session.prompt 事件的 event.model，字符串）
 }
 
 async function loadDeps() {
@@ -272,11 +276,16 @@ function mergeSession(fileRec, mine) {
   const lr = lrMine && (!lrFile || numOr(lrMine.at, 0) >= numOr(lrFile.at, 0)) ? lrMine : lrFile
   const sb = pickNewest(a.lastSandboxReject, mine.lastSandboxReject)
 
+  // model 不是单调量：取最新一次非空值（mine 有就覆盖），供面板显示「本会话模型」。
+  const model = String(mine.model || a.model || "")
+
   return {
     rejected: Math.max(numOr(a.rejected, 0), mine.rejected),
     dispatched: Math.max(numOr(a.dispatched, 0), mine.dispatched),
     exempted: Math.max(numOr(a.exempted, 0), mine.exempted),
     sandboxRejects: Math.max(numOr(a.sandboxRejects, 0), numOr(mine.sandboxRejects, 0)),
+    model,
+    cheap: model ? !!mine.cheap : !!a.cheap,
     used,
     lastReject: lr ? { tool: lr.tool, reason: lr.reason, at: numOr(lr.at, 0) } : null,
     lastSandboxReject: sb ? { tool: sb.tool, reason: sb.reason, at: numOr(sb.at, 0) } : null,
@@ -330,6 +339,8 @@ async function flushCounts() {
         lastSandboxReject: r.lastSandboxReject,
         recentRejects: r.recentRejects,
         recentSandboxRejects: r.recentSandboxRejects,
+        model: S.models.get(sid) || "",
+        cheap: !!S.models.get(sid) && modelAllowed(S.models.get(sid)),
       })
     }
     const entries = Object.entries(sessions)
@@ -355,6 +366,79 @@ async function flushCounts() {
   }
 }
 
+// 放行模型名的归一化与匹配（与 enhanced-prompt-card 的 modelMatches 口径一致）。
+function sanitizeModels(value) {
+  const out = []
+  if (!Array.isArray(value)) return out
+  for (const item of value) {
+    const text = String(item ?? "").trim().slice(0, 80)
+    if (!text || out.includes(text)) continue
+    out.push(text)
+    if (out.length >= 100) break
+  }
+  return out
+}
+
+function modelAllowed(model, list = cfg.cheapModels) {
+  if (!list.length) return false
+  const value = String(model ?? "").trim().toLowerCase()
+  if (!value) return false
+  const tail = value.slice(value.lastIndexOf("/") + 1)
+  return list.some((raw) => {
+    const want = String(raw ?? "").trim().toLowerCase()
+    if (!want) return false
+    if (want.includes("*")) {
+      const re = new RegExp("^" + want.split("*").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$")
+      return re.test(value) || re.test(tail)
+    }
+    if (want.includes("/")) return value === want
+    return tail === want || value === want
+  })
+}
+
+// 当前会话模型来自 session.prompt 事件的 event.model（形状为字符串或
+// {providerID, modelID|id}），工具事件里没有 model 字段，所以在这里记一次。
+function modelFromEvent(event) {
+  const value = event?.model
+  if (typeof value === "string") return value.trim()
+  if (value && typeof value === "object") {
+    const provider = String(value.providerID || value.provider?.id || "").trim()
+    const model = String(value.modelID || value.id || "").trim()
+    if (provider && model) return `${provider}/${model}`
+    if (model) return model
+  }
+  const provider = String(event?.providerID || "").trim()
+  const model = String(event?.modelID || "").trim()
+  if (provider && model) return `${provider}/${model}`
+  if (model) return model
+  return ""
+}
+
+function rememberModel(sid, event) {
+  if (!sid) return ""
+  const model = modelFromEvent(event)
+  if (!model) return S.models.get(sid) || ""
+  if (S.models.size > 200) S.models.clear()
+  S.models.set(sid, model)
+  return model
+}
+
+// prompt 钩子没跑过（会话早于插件启动等）时兜一次 session.get，失败记空串不再重试。
+async function modelOf(sid) {
+  const known = S.models.get(sid)
+  if (known !== undefined) return known
+  if (!ctxRef) return ""
+  try {
+    const info = await ctxRef.session.get({ sessionID: sid })
+    const model = modelFromEvent(info && info.model ? { model: info.model } : info)
+    S.models.set(sid, model)
+    return model
+  } catch {
+    S.models.set(sid, "")
+    return ""
+  }
+}
+
 async function refreshConfig(force) {
   if (!force && Date.now() - cfgAt < 3000) return
   cfgAt = Date.now()
@@ -373,6 +457,7 @@ async function refreshConfig(force) {
     }
     if (Number.isFinite(j.exemptionRoundCap) && j.exemptionRoundCap >= 0) next.exemptionRoundCap = j.exemptionRoundCap
     if (j.exemptSessions && typeof j.exemptSessions === "object") next.exemptSessions = j.exemptSessions
+    if (Array.isArray(j.cheapModels)) next.cheapModels = sanitizeModels(j.cheapModels)
     cfg = next
   } catch (err) {
     // 配置读失败用缓存/默认值，不关守卫
@@ -856,6 +941,8 @@ function hasTailFollow(cmd) {
 }
 
 export { sandboxWrap, sandboxDeny, probeSandbox }
+export { modelAllowed, sanitizeModels, modelFromEvent }
+
 // ---------------------------------------------------------------- tool hook
 async function onTool(event) {
   let controlled = false
@@ -916,6 +1003,13 @@ async function onTool(event) {
       return
     }
     if (agent === "general" || agent === "stock") return
+
+    // 成本档：名单里的模型（便宜模型）完全不拦、不计数，自己干。
+    // 放在 scout 分支之后，保证子代理沙箱不受名单影响；名单为空时零开销。
+    if (cfg.cheapModels.length) {
+      const model = await modelOf(sid)
+      if (model && modelAllowed(model)) return
+    }
 
     // 判定优先级：event.agent 直接决定；自定义主 agent 按 plan 守。
     let mode = null
@@ -1008,6 +1102,7 @@ async function onPrompt(event) {
     const sid = String(event?.sessionID ?? event?.session?.id ?? event?.message?.sessionID ?? "")
     if (!sid) return
     const text = String(event?.prompt?.text ?? "")
+    rememberModel(sid, event)
 
     // 只认主会话：经 session.get 验证无 parentID 才记；拿不准就不记（不误卡子代理）
     let isMain = false

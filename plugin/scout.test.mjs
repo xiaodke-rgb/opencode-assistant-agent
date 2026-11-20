@@ -145,3 +145,36 @@ test("沙箱：外部副作用黑名单", () => {
     "ls | head -3",
   ]) assert.equal(sandboxDeny(c), null, "应放行：" + c)
 })
+
+// ---- 成本档：模型白名单（cheapModels）
+import { modelAllowed, sanitizeModels, modelFromEvent } from "./scout.ts"
+
+test("cheapModels 为空：任何模型都不放行", () => {
+  assert.equal(modelAllowed("commandcode/deepseek/deepseek-v4.1-flash", []), false)
+  assert.equal(modelAllowed("", []), false)
+})
+
+test("cheapModels：全量 / 尾段 / 通配三种写法", () => {
+  const list = ["deepseek-flash", "openai/gpt-5", "*free*"]
+  // 尾段匹配
+  assert.equal(modelAllowed("deepseek/deepseek-flash", list), true)
+  // 全量精确
+  assert.equal(modelAllowed("openai/gpt-5", list), true)
+  assert.equal(modelAllowed("openai/gpt-5-mini", list), false)
+  // 通配
+  assert.equal(modelAllowed("commandcode/deepseek/deepseek-v4.1-flash-free", list), true)
+  // 不在名单
+  assert.equal(modelAllowed("xai/grok-4", list), false)
+})
+
+test("sanitizeModels：去空白/去重/限长", () => {
+  assert.deepEqual(sanitizeModels([" a ", "a", "", null, 3]), ["a", "3"])
+  assert.deepEqual(sanitizeModels("nope"), [])
+})
+
+test("modelFromEvent：字符串与对象两种形状", () => {
+  assert.equal(modelFromEvent({ model: "a/b" }), "a/b")
+  assert.equal(modelFromEvent({ model: { providerID: "p", id: "m" } }), "p/m")
+  assert.equal(modelFromEvent({ providerID: "p", modelID: "m" }), "p/m")
+  assert.equal(modelFromEvent({}), "")
+})

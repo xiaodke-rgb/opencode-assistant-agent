@@ -17,10 +17,12 @@ import {
   applyHostReady,
   mountBanner,
   mountButton,
+  mountSelect,
   mountSwitch,
   mountTextField,
   type BannerHandle,
   type ButtonHandle,
+  type SelectHandle,
   type SwitchHandle,
   type TextFieldHandle,
 } from '@openchamber/sdk/ui';
@@ -30,6 +32,8 @@ const root = document.querySelector('#root') as HTMLElement;
 
 const CONFIG_PATH = '~/.local/share/opencode/plugin-data/scout/scout.json';
 const COUNTS_PATH = '~/.local/share/opencode/plugin-data/scout/scout-counts.json';
+/** 增强提示卡插件每日刷新的模型目录，只读复用，避免 scout 自己再生成一份。 */
+const MODELS_PATH = '~/.local/share/opencode/plugin-data/enhanced-prompt-card/models.json';
 const POLL_MS = 5000;
 
 type Totals = { read: number; web: number; command: number };
@@ -40,6 +44,7 @@ type Config = {
   sessionTotals: Totals;
   exemptionRoundCap: number;
   exemptSessions: Record<string, boolean>;
+  cheapModels: string[];
 };
 type RejectRec = { tool?: string; reason?: string; at?: number };
 type SessionStats = {
@@ -48,6 +53,8 @@ type SessionStats = {
   exempted: number;
   sandboxRejects: number;
   used: Totals;
+  model?: string;
+  cheap?: boolean;
   updatedAt: number;
   lastReject: RejectRec | null;
   lastSandboxReject: RejectRec | null;
@@ -70,6 +77,7 @@ const DEFAULT_CONFIG: Config = {
   sessionTotals: { read: 30, web: 10, command: 12 },
   exemptionRoundCap: 5,
   exemptSessions: {},
+  cheapModels: [],
 };
 
 const REASON_LABEL: Record<string, string> = {
@@ -100,6 +108,7 @@ let draft: {
   web: number;
   command: number;
   exemptionRoundCap: number;
+  cheapModels: string[];
 } | null = null;
 let dirty = false;
 let saving = false;
@@ -142,6 +151,14 @@ function normalizeConfig(raw: unknown): Config {
   for (const [k, v] of Object.entries(exemptIn)) {
     if (v === true && /^[A-Za-z0-9_-]{1,80}$/.test(k)) exempt[k] = true;
   }
+  const cheapIn = Array.isArray(r.cheapModels) ? r.cheapModels : [];
+  const cheapModels: string[] = [];
+  for (const item of cheapIn) {
+    const text = typeof item === 'string' ? item.trim() : '';
+    if (!text || text.length > 80 || cheapModels.includes(text)) continue;
+    cheapModels.push(text);
+    if (cheapModels.length >= 100) break;
+  }
   return {
     enabled: typeof r.enabled === 'boolean' ? r.enabled : d.enabled,
     exemptionWord: typeof r.exemptionWord === 'string' && r.exemptionWord.trim() ? r.exemptionWord : d.exemptionWord,
@@ -153,6 +170,7 @@ function normalizeConfig(raw: unknown): Config {
     },
     exemptionRoundCap: intOr(r.exemptionRoundCap, d.exemptionRoundCap),
     exemptSessions: exempt,
+    cheapModels,
   };
 }
 
@@ -179,6 +197,14 @@ let tfRead: TextFieldHandle | null = null;
 let tfWeb: TextFieldHandle | null = null;
 let tfCmd: TextFieldHandle | null = null;
 let tfCap: TextFieldHandle | null = null;
+let tfModels: TextFieldHandle | null = null;
+let selModel: SelectHandle | null = null;
+let modelChipsEl: HTMLElement | null = null;
+
+/** 模型目录（来自增强提示卡的 models.json），供「添加模型」下拉检索。 */
+type ModelEntry = { id: string; name?: string; providerName?: string };
+let modelCatalog: ModelEntry[] = [];
+let catalogLoaded = false;
 
 function setBanner(tone: 'info' | 'warning' | 'error', title: string, body: string): void {
   const key = `${tone}|${title}|${body}`;
@@ -252,6 +278,81 @@ function markDirty(): void {
   if (saveStateEl) saveStateEl.textContent = '有未保存更改';
 }
 
+/** 逗号/换行分隔 → 去空、去重、限长（与插件 sanitizeModels 同口径）。 */
+function parseModelList(raw: string): string[] {
+  const out: string[] = [];
+  for (const part of raw.split(/[,，\n]/)) {
+    const text = part.trim();
+    if (!text || text.length > 80 || out.includes(text)) continue;
+    out.push(text);
+    if (out.length >= 100) break;
+  }
+  return out;
+}
+
+/** 草稿里的模型名单显成标签，让用户看到实际会写进配置的内容。 */
+function renderModelChips(list: string[]): void {
+  if (!modelChipsEl) return;
+  modelChipsEl.textContent = '';
+  if (!list.length) {
+    modelChipsEl.append(el('span', 'muted', '未设置：所有模型都按现有规则拦截'));
+    return;
+  }
+  for (const m of list) {
+    const chip = el('span', 'model-chip', m);
+    const x = document.createElement('button');
+    x.className = 'model-chip-x';
+    x.textContent = '×';
+    x.type = 'button';
+    x.title = '移除';
+    x.addEventListener('click', () => {
+      if (!draft) return;
+      draft.cheapModels = draft.cheapModels.filter((v) => v !== m);
+      renderModelChips(draft.cheapModels);
+      tfModels?.update({ value: draft.cheapModels.join('\n') });
+      markDirty();
+    });
+    chip.append(x);
+    modelChipsEl.append(chip);
+  }
+}
+
+/** 读增强提示卡生成的模型目录；读不到就只留文本输入，不影响保存。 */
+async function loadModelCatalog(): Promise<void> {
+  if (catalogLoaded) return;
+  catalogLoaded = true;
+  try {
+    const res = await host.readFile(MODELS_PATH);
+    const j = JSON.parse(res.content) as { models?: unknown };
+    const list = Array.isArray(j?.models) ? j.models : [];
+    const out: ModelEntry[] = [];
+    for (const item of list) {
+      const m = (item ?? {}) as Record<string, unknown>;
+      const id = typeof m.id === 'string' ? m.id.trim() : '';
+      if (!id || out.some((x) => x.id === id)) continue;
+      out.push({
+        id,
+        name: typeof m.name === 'string' ? m.name : undefined,
+        providerName: typeof m.providerName === 'string' ? m.providerName : undefined,
+      });
+    }
+    out.sort((a, b) => a.id.localeCompare(b.id));
+    modelCatalog = out;
+  } catch {
+    modelCatalog = [];
+  }
+  applyModelOptions();
+}
+
+function applyModelOptions(): void {
+  if (!selModel) return;
+  selModel.update({
+    options: modelCatalog.map((m) => ({ id: m.id, label: m.name && m.name !== m.id ? m.name : m.id, hint: m.providerName })),
+    disabled: modelCatalog.length === 0,
+    placeholder: modelCatalog.length ? '搜索 provider/model' : '模型目录未加载',
+  });
+}
+
 function buildSandboxSettings(wrap: HTMLElement): void {
   swEnabled = mountSwitch(wrap, {
     label: '总开关',
@@ -322,6 +423,44 @@ function buildQuotaSettings(wrap: HTMLElement): void {
     },
   });
 
+  modelChipsEl = el('div', 'model-chips');
+  wrap.append(modelChipsEl);
+
+  const pickRow = el('div', 'save-row');
+  wrap.append(pickRow);
+  selModel = mountSelect(pickRow, {
+    label: '添加模型',
+    value: null,
+    options: [],
+    placeholder: modelCatalog.length ? '搜索 provider/model' : '模型目录未加载',
+    searchable: true,
+    searchPlaceholder: '搜索 provider/model',
+    disabled: true,
+    onChange: (id) => {
+      if (!id || !draft) return;
+      if (!draft.cheapModels.includes(id)) draft.cheapModels.push(id);
+      renderModelChips(draft.cheapModels);
+      tfModels?.update({ value: draft.cheapModels.join('\n') });
+      selModel?.update({ value: null });
+      markDirty();
+    },
+  });
+
+  tfModels = mountTextField(wrap, {
+    label: '放行的模型（不拦截）',
+    helper: '逗号或换行分隔；支持 provider/model 全量、仅模型名尾段匹配、* 通配。留空 = 全部受控',
+    placeholder: 'deepseek-flash, *free*',
+    value: '',
+    multiline: true,
+    rows: 3,
+    mono: true,
+    onChange: (v) => {
+      if (draft) draft.cheapModels = parseModelList(v);
+      renderModelChips(draft?.cheapModels ?? []);
+      markDirty();
+    },
+  });
+
   const saveRow = el('div', 'save-row');
   saveBtn = mountButton(saveRow, { label: '保存', variant: 'default', disabled: true, onClick: () => void save() });
   saveStateEl = el('span', 'save-state', '');
@@ -381,8 +520,10 @@ function renderStats(
 
   const state = sandbox ? (sandbox.ok ? '正常' : '不可用') : '未知';
   const at = sandbox?.at ? ` ${fmtTime(sandbox.at)}` : '';
+  const model = (s?.model ?? '').trim();
+  const modelNote = model ? ` · 模型 ${model}${s?.cheap ? '（已放行）' : ''}` : '';
   statsEl.textContent = sessionId
-    ? `本会话：直查拦截 ${rejected} · 派单 ${dispatched} · 豁免 ${exempted} · 沙箱：${state}${at}`
+    ? `本会话：直查拦截 ${rejected} · 派单 ${dispatched} · 豁免 ${exempted} · 沙箱：${state}${at}${modelNote}`
     : '本会话：未绑定会话';
 
   renderLogBox(rejectBoxEl, s?.recentRejects ?? [], s?.lastReject ?? null);
@@ -417,6 +558,8 @@ function applyConfig(cfg: Config, force: boolean): void {
   tfWeb?.update({ value: String(d.web) });
   tfCmd?.update({ value: String(d.command) });
   tfCap?.update({ value: String(d.exemptionRoundCap) });
+  tfModels?.update({ value: d.cheapModels.join('\n') });
+  renderModelChips(d.cheapModels);
   if (force) dirty = false;
   saveBtn?.update({ disabled: !dirty });
   if (!dirty && saveStateEl) saveStateEl.textContent = '';
@@ -432,6 +575,7 @@ function draftFrom(cfg: Config): NonNullable<typeof draft> {
     web: cfg.sessionTotals.web,
     command: cfg.sessionTotals.command,
     exemptionRoundCap: cfg.exemptionRoundCap,
+    cheapModels: [...cfg.cheapModels],
   };
 }
 
@@ -511,6 +655,8 @@ function normalizeSessionStats(raw: unknown): SessionStats {
       web: intOr(used.web, 0),
       command: intOr(used.command, 0),
     },
+    model: typeof r.model === 'string' ? r.model : '',
+    cheap: r.cheap === true,
     updatedAt: intOr(r.updatedAt, 0),
     lastReject: normReject(r.lastReject),
     lastSandboxReject: normReject(r.lastSandboxReject),
@@ -588,6 +734,7 @@ async function save(): Promise<void> {
       sessionTotals: { read: d.read, web: d.web, command: d.command },
       exemptionRoundCap: d.exemptionRoundCap,
       exemptSessions: config.exemptSessions,
+      cheapModels: [...d.cheapModels],
     };
     await writeConfigFile(next);
     applyConfig(next, true);
@@ -636,6 +783,7 @@ host.onReady((ctx) => {
   applyHostReady(ctx, document.documentElement);
   buildDom();
   attachSession(ctx.session?.id ?? null, ctx.session?.title ?? null);
+  void loadModelCatalog();
   void poll();
 });
 

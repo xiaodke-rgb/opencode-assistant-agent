@@ -73,6 +73,44 @@ body {
   opacity: 0.7;
 }
 
+.model-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -2px;
+}
+
+.model-chip {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  padding: 2px 4px 2px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+  background: var(--muted, rgba(128, 128, 128, 0.12));
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-chip-x {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.model-chip-x:hover {
+  opacity: 1;
+}
+
 .logs {
   display: flex;
   flex-direction: column;
