@@ -34,6 +34,8 @@ const CONFIG_PATH = '~/.local/share/opencode/plugin-data/scout/scout.json';
 const COUNTS_PATH = '~/.local/share/opencode/plugin-data/scout/scout-counts.json';
 /** 增强提示卡插件每日刷新的模型目录，只读复用，避免 scout 自己再生成一份。 */
 const MODELS_PATH = '~/.local/share/opencode/plugin-data/enhanced-prompt-card/models.json';
+/** 下拉建议值：SDK 没有 agent 列表接口，这里给常用名，其余手填。 */
+const AGENT_SUGGESTIONS = ['plan', 'build', 'general', 'stock', 'explore', 'chat', 'scout', 'explore*'];
 const POLL_MS = 5000;
 
 type Totals = { read: number; web: number; command: number };
@@ -45,6 +47,7 @@ type Config = {
   exemptionRoundCap: number;
   exemptSessions: Record<string, boolean>;
   cheapModels: string[];
+  passAgents: string[];
 };
 type RejectRec = { tool?: string; reason?: string; at?: number };
 type SessionStats = {
@@ -78,6 +81,7 @@ const DEFAULT_CONFIG: Config = {
   exemptionRoundCap: 5,
   exemptSessions: {},
   cheapModels: [],
+  passAgents: ['general', 'stock'],
 };
 
 const REASON_LABEL: Record<string, string> = {
@@ -109,6 +113,7 @@ let draft: {
   command: number;
   exemptionRoundCap: number;
   cheapModels: string[];
+  passAgents: string[];
 } | null = null;
 let dirty = false;
 let saving = false;
@@ -140,6 +145,19 @@ function intOr(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : fallback;
 }
 
+/** 名单清洗：去空、去重、限长（与插件 sanitizeModels 同口径）。 */
+function cleanList(raw: unknown, fallback: string[] = []): string[] {
+  if (!Array.isArray(raw)) return [...fallback];
+  const out: string[] = [];
+  for (const item of raw) {
+    const text = typeof item === 'string' ? item.trim() : '';
+    if (!text || text.length > 80 || out.includes(text)) continue;
+    out.push(text);
+    if (out.length >= 100) break;
+  }
+  return out;
+}
+
 /** 把文件里读到的内容规整成完整 Config（未知键丢弃，缺失键取默认）。 */
 function normalizeConfig(raw: unknown): Config {
   const d = DEFAULT_CONFIG;
@@ -151,14 +169,8 @@ function normalizeConfig(raw: unknown): Config {
   for (const [k, v] of Object.entries(exemptIn)) {
     if (v === true && /^[A-Za-z0-9_-]{1,80}$/.test(k)) exempt[k] = true;
   }
-  const cheapIn = Array.isArray(r.cheapModels) ? r.cheapModels : [];
-  const cheapModels: string[] = [];
-  for (const item of cheapIn) {
-    const text = typeof item === 'string' ? item.trim() : '';
-    if (!text || text.length > 80 || cheapModels.includes(text)) continue;
-    cheapModels.push(text);
-    if (cheapModels.length >= 100) break;
-  }
+  const cheapModels = cleanList(r.cheapModels);
+  const passAgents = cleanList(r.passAgents, d.passAgents);
   return {
     enabled: typeof r.enabled === 'boolean' ? r.enabled : d.enabled,
     exemptionWord: typeof r.exemptionWord === 'string' && r.exemptionWord.trim() ? r.exemptionWord : d.exemptionWord,
@@ -171,6 +183,7 @@ function normalizeConfig(raw: unknown): Config {
     exemptionRoundCap: intOr(r.exemptionRoundCap, d.exemptionRoundCap),
     exemptSessions: exempt,
     cheapModels,
+    passAgents,
   };
 }
 
@@ -199,6 +212,10 @@ let tfCmd: TextFieldHandle | null = null;
 let tfCap: TextFieldHandle | null = null;
 let tfModels: TextFieldHandle | null = null;
 let selModel: SelectHandle | null = null;
+let tfAgents: TextFieldHandle | null = null;
+let selAgent: SelectHandle | null = null;
+let agentChipsEl: HTMLElement | null = null;
+let modelRefreshBtn: ButtonHandle | null = null;
 let modelChipsEl: HTMLElement | null = null;
 
 /** 模型目录（来自增强提示卡的 models.json），供「添加模型」下拉检索。 */
@@ -290,12 +307,12 @@ function parseModelList(raw: string): string[] {
   return out;
 }
 
-/** 草稿里的模型名单显成标签，让用户看到实际会写进配置的内容。 */
-function renderModelChips(list: string[]): void {
-  if (!modelChipsEl) return;
-  modelChipsEl.textContent = '';
+/** 名单显成标签，让用户看到实际会写进配置的内容。 */
+function renderChips(host: HTMLElement | null, list: string[], empty: string, onRemove: (v: string) => void): void {
+  if (!host) return;
+  host.textContent = '';
   if (!list.length) {
-    modelChipsEl.append(el('span', 'muted', '未设置：所有模型都按现有规则拦截'));
+    host.append(el('span', 'muted', empty));
     return;
   }
   for (const m of list) {
@@ -305,21 +322,35 @@ function renderModelChips(list: string[]): void {
     x.textContent = '×';
     x.type = 'button';
     x.title = '移除';
-    x.addEventListener('click', () => {
-      if (!draft) return;
-      draft.cheapModels = draft.cheapModels.filter((v) => v !== m);
-      renderModelChips(draft.cheapModels);
-      tfModels?.update({ value: draft.cheapModels.join('\n') });
-      markDirty();
-    });
+    x.addEventListener('click', () => onRemove(m));
     chip.append(x);
-    modelChipsEl.append(chip);
+    host.append(chip);
   }
 }
 
+function renderModelChips(list: string[]): void {
+  renderChips(modelChipsEl, list, '未设置：所有模型都按现有规则拦截', (m) => {
+    if (!draft) return;
+    draft.cheapModels = draft.cheapModels.filter((v) => v !== m);
+    renderModelChips(draft.cheapModels);
+    tfModels?.update({ value: draft.cheapModels.join('\n') });
+    markDirty();
+  });
+}
+
+function renderAgentChips(list: string[]): void {
+  renderChips(agentChipsEl, list, '未设置：所有 agent 都按现有规则拦截', (m) => {
+    if (!draft) return;
+    draft.passAgents = draft.passAgents.filter((v) => v !== m);
+    renderAgentChips(draft.passAgents);
+    tfAgents?.update({ value: draft.passAgents.join('\n') });
+    markDirty();
+  });
+}
+
 /** 读增强提示卡生成的模型目录；读不到就只留文本输入，不影响保存。 */
-async function loadModelCatalog(): Promise<void> {
-  if (catalogLoaded) return;
+async function loadModelCatalog(force = false): Promise<void> {
+  if (catalogLoaded && !force) return;
   catalogLoaded = true;
   try {
     const res = await host.readFile(MODELS_PATH);
@@ -345,12 +376,24 @@ async function loadModelCatalog(): Promise<void> {
 }
 
 function applyModelOptions(): void {
-  if (!selModel) return;
-  selModel.update({
+  const n = modelCatalog.length;
+  const label = n ? `选择模型（${n}）` : '模型目录未加载';
+  selModel?.update({
     options: modelCatalog.map((m) => ({ id: m.id, label: m.name && m.name !== m.id ? m.name : m.id, hint: m.providerName })),
-    disabled: modelCatalog.length === 0,
-    placeholder: modelCatalog.length ? '搜索 provider/model' : '模型目录未加载',
+    disabled: n === 0,
+    placeholder: label,
   });
+  modelRefreshBtn?.update({ label: '刷新' });
+}
+
+/** 手动重读模型目录：增强提示卡刷新了 models.json 后，不用重载扩展。 */
+async function refreshModelCatalog(): Promise<void> {
+  modelRefreshBtn?.update({ loading: true });
+  try {
+    await loadModelCatalog(true);
+  } finally {
+    modelRefreshBtn?.update({ loading: false });
+  }
 }
 
 function buildSandboxSettings(wrap: HTMLElement): void {
@@ -423,16 +466,14 @@ function buildQuotaSettings(wrap: HTMLElement): void {
     },
   });
 
-  modelChipsEl = el('div', 'model-chips');
-  wrap.append(modelChipsEl);
-
-  const pickRow = el('div', 'save-row');
+  wrap.append(el('div', 'field-caption', '放行的模型（不拦截）'));
+  const pickRow = el('div', 'model-picker');
   wrap.append(pickRow);
   selModel = mountSelect(pickRow, {
-    label: '添加模型',
+    label: '',
     value: null,
     options: [],
-    placeholder: modelCatalog.length ? '搜索 provider/model' : '模型目录未加载',
+    placeholder: '选择模型',
     searchable: true,
     searchPlaceholder: '搜索 provider/model',
     disabled: true,
@@ -445,9 +486,16 @@ function buildQuotaSettings(wrap: HTMLElement): void {
       markDirty();
     },
   });
+  modelRefreshBtn = mountButton(pickRow, {
+    label: '刷新',
+    variant: 'outline',
+    onClick: () => void refreshModelCatalog(),
+  });
+  modelChipsEl = el('div', 'model-chips');
+  wrap.append(modelChipsEl);
 
   tfModels = mountTextField(wrap, {
-    label: '放行的模型（不拦截）',
+    label: '手动编辑',
     helper: '逗号或换行分隔；支持 provider/model 全量、仅模型名尾段匹配、* 通配。留空 = 全部受控',
     placeholder: 'deepseek-flash, *free*',
     value: '',
@@ -457,6 +505,44 @@ function buildQuotaSettings(wrap: HTMLElement): void {
     onChange: (v) => {
       if (draft) draft.cheapModels = parseModelList(v);
       renderModelChips(draft?.cheapModels ?? []);
+      markDirty();
+    },
+  });
+
+  wrap.append(el('div', 'field-caption', '放行的 agent（不拦截）'));
+  const agentRow = el('div', 'model-picker');
+  wrap.append(agentRow);
+  selAgent = mountSelect(agentRow, {
+    label: '',
+    value: null,
+    options: AGENT_SUGGESTIONS.map((a) => ({ id: a, label: a })),
+    placeholder: '选择 agent',
+    searchable: true,
+    searchPlaceholder: '搜索 agent 名称',
+    disabled: false,
+    onChange: (id) => {
+      if (!id || !draft) return;
+      if (!draft.passAgents.includes(id)) draft.passAgents.push(id);
+      renderAgentChips(draft.passAgents);
+      tfAgents?.update({ value: draft.passAgents.join('\n') });
+      selAgent?.update({ value: null });
+      markDirty();
+    },
+  });
+  agentChipsEl = el('div', 'model-chips');
+  wrap.append(agentChipsEl);
+
+  tfAgents = mountTextField(wrap, {
+    label: '手动编辑',
+    helper: '逗号或换行分隔；`*` 结尾按前缀匹配（explore* 命中 explore 系列），其余精确匹配。留空 = 全部受控',
+    placeholder: 'general, stock, explore*',
+    value: '',
+    multiline: true,
+    rows: 3,
+    mono: true,
+    onChange: (v) => {
+      if (draft) draft.passAgents = parseModelList(v);
+      renderAgentChips(draft?.passAgents ?? []);
       markDirty();
     },
   });
@@ -560,6 +646,8 @@ function applyConfig(cfg: Config, force: boolean): void {
   tfCap?.update({ value: String(d.exemptionRoundCap) });
   tfModels?.update({ value: d.cheapModels.join('\n') });
   renderModelChips(d.cheapModels);
+  tfAgents?.update({ value: d.passAgents.join('\n') });
+  renderAgentChips(d.passAgents);
   if (force) dirty = false;
   saveBtn?.update({ disabled: !dirty });
   if (!dirty && saveStateEl) saveStateEl.textContent = '';
@@ -576,6 +664,7 @@ function draftFrom(cfg: Config): NonNullable<typeof draft> {
     command: cfg.sessionTotals.command,
     exemptionRoundCap: cfg.exemptionRoundCap,
     cheapModels: [...cfg.cheapModels],
+    passAgents: [...cfg.passAgents],
   };
 }
 
@@ -735,6 +824,7 @@ async function save(): Promise<void> {
       exemptionRoundCap: d.exemptionRoundCap,
       exemptSessions: config.exemptSessions,
       cheapModels: [...d.cheapModels],
+      passAgents: [...d.passAgents],
     };
     await writeConfigFile(next);
     applyConfig(next, true);

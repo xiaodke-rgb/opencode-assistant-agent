@@ -80,6 +80,41 @@ body {
   margin-top: -2px;
 }
 
+/* 一行：模型下拉占满，刷新按钮固定宽度，两者等高。 */
+.field-caption {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  margin-bottom: -4px;
+}
+
+.model-picker {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.model-picker > .oc-sdk-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-picker .oc-sdk-trigger {
+  width: 100%;
+  justify-content: space-between;
+  height: 34px;
+  box-sizing: border-box;
+  font-size: 12.5px;
+}
+
+.model-picker .oc-sdk-btn,
+.model-picker > button {
+  flex: 0 0 auto;
+  height: 34px;
+  box-sizing: border-box;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
 .model-chip {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 11px;

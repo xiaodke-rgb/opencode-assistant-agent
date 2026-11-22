@@ -2246,6 +2246,7 @@ ${GUEST_UI_LOOK_CSS}`;
   var CONFIG_PATH = "~/.local/share/opencode/plugin-data/scout/scout.json";
   var COUNTS_PATH = "~/.local/share/opencode/plugin-data/scout/scout-counts.json";
   var MODELS_PATH = "~/.local/share/opencode/plugin-data/enhanced-prompt-card/models.json";
+  var AGENT_SUGGESTIONS = ["plan", "build", "general", "stock", "explore", "chat", "scout", "explore*"];
   var POLL_MS = 5e3;
   var DEFAULT_CONFIG = {
     enabled: true,
@@ -2254,7 +2255,8 @@ ${GUEST_UI_LOOK_CSS}`;
     sessionTotals: { read: 30, web: 10, command: 12 },
     exemptionRoundCap: 5,
     exemptSessions: {},
-    cheapModels: []
+    cheapModels: [],
+    passAgents: ["general", "stock"]
   };
   var REASON_LABEL = {
     direct: "\u76F4\u63A5\u62D2",
@@ -2292,6 +2294,17 @@ ${GUEST_UI_LOOK_CSS}`;
   function intOr(v2, fallback) {
     return typeof v2 === "number" && Number.isFinite(v2) ? Math.trunc(v2) : fallback;
   }
+  function cleanList(raw, fallback = []) {
+    if (!Array.isArray(raw)) return [...fallback];
+    const out = [];
+    for (const item of raw) {
+      const text = typeof item === "string" ? item.trim() : "";
+      if (!text || text.length > 80 || out.includes(text)) continue;
+      out.push(text);
+      if (out.length >= 100) break;
+    }
+    return out;
+  }
   function normalizeConfig(raw) {
     const d = DEFAULT_CONFIG;
     if (!raw || typeof raw !== "object") return clone(d);
@@ -2302,14 +2315,8 @@ ${GUEST_UI_LOOK_CSS}`;
     for (const [k, v2] of Object.entries(exemptIn)) {
       if (v2 === true && /^[A-Za-z0-9_-]{1,80}$/.test(k)) exempt[k] = true;
     }
-    const cheapIn = Array.isArray(r.cheapModels) ? r.cheapModels : [];
-    const cheapModels = [];
-    for (const item of cheapIn) {
-      const text = typeof item === "string" ? item.trim() : "";
-      if (!text || text.length > 80 || cheapModels.includes(text)) continue;
-      cheapModels.push(text);
-      if (cheapModels.length >= 100) break;
-    }
+    const cheapModels = cleanList(r.cheapModels);
+    const passAgents = cleanList(r.passAgents, d.passAgents);
     return {
       enabled: typeof r.enabled === "boolean" ? r.enabled : d.enabled,
       exemptionWord: typeof r.exemptionWord === "string" && r.exemptionWord.trim() ? r.exemptionWord : d.exemptionWord,
@@ -2321,7 +2328,8 @@ ${GUEST_UI_LOOK_CSS}`;
       },
       exemptionRoundCap: intOr(r.exemptionRoundCap, d.exemptionRoundCap),
       exemptSessions: exempt,
-      cheapModels
+      cheapModels,
+      passAgents
     };
   }
   var statsEl;
@@ -2344,6 +2352,10 @@ ${GUEST_UI_LOOK_CSS}`;
   var tfCap = null;
   var tfModels = null;
   var selModel = null;
+  var tfAgents = null;
+  var selAgent = null;
+  var agentChipsEl = null;
+  var modelRefreshBtn = null;
   var modelChipsEl = null;
   var modelCatalog = [];
   var catalogLoaded = false;
@@ -2419,11 +2431,11 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     return out;
   }
-  function renderModelChips(list) {
-    if (!modelChipsEl) return;
-    modelChipsEl.textContent = "";
+  function renderChips(host2, list, empty, onRemove) {
+    if (!host2) return;
+    host2.textContent = "";
     if (!list.length) {
-      modelChipsEl.append(el2("span", "muted", "\u672A\u8BBE\u7F6E\uFF1A\u6240\u6709\u6A21\u578B\u90FD\u6309\u73B0\u6709\u89C4\u5219\u62E6\u622A"));
+      host2.append(el2("span", "muted", empty));
       return;
     }
     for (const m of list) {
@@ -2433,19 +2445,31 @@ ${GUEST_UI_LOOK_CSS}`;
       x.textContent = "\xD7";
       x.type = "button";
       x.title = "\u79FB\u9664";
-      x.addEventListener("click", () => {
-        if (!draft) return;
-        draft.cheapModels = draft.cheapModels.filter((v2) => v2 !== m);
-        renderModelChips(draft.cheapModels);
-        tfModels?.update({ value: draft.cheapModels.join("\n") });
-        markDirty();
-      });
+      x.addEventListener("click", () => onRemove(m));
       chip.append(x);
-      modelChipsEl.append(chip);
+      host2.append(chip);
     }
   }
-  async function loadModelCatalog() {
-    if (catalogLoaded) return;
+  function renderModelChips(list) {
+    renderChips(modelChipsEl, list, "\u672A\u8BBE\u7F6E\uFF1A\u6240\u6709\u6A21\u578B\u90FD\u6309\u73B0\u6709\u89C4\u5219\u62E6\u622A", (m) => {
+      if (!draft) return;
+      draft.cheapModels = draft.cheapModels.filter((v2) => v2 !== m);
+      renderModelChips(draft.cheapModels);
+      tfModels?.update({ value: draft.cheapModels.join("\n") });
+      markDirty();
+    });
+  }
+  function renderAgentChips(list) {
+    renderChips(agentChipsEl, list, "\u672A\u8BBE\u7F6E\uFF1A\u6240\u6709 agent \u90FD\u6309\u73B0\u6709\u89C4\u5219\u62E6\u622A", (m) => {
+      if (!draft) return;
+      draft.passAgents = draft.passAgents.filter((v2) => v2 !== m);
+      renderAgentChips(draft.passAgents);
+      tfAgents?.update({ value: draft.passAgents.join("\n") });
+      markDirty();
+    });
+  }
+  async function loadModelCatalog(force = false) {
+    if (catalogLoaded && !force) return;
     catalogLoaded = true;
     try {
       const res = await host.readFile(MODELS_PATH);
@@ -2470,12 +2494,22 @@ ${GUEST_UI_LOOK_CSS}`;
     applyModelOptions();
   }
   function applyModelOptions() {
-    if (!selModel) return;
-    selModel.update({
+    const n = modelCatalog.length;
+    const label = n ? `\u9009\u62E9\u6A21\u578B\uFF08${n}\uFF09` : "\u6A21\u578B\u76EE\u5F55\u672A\u52A0\u8F7D";
+    selModel?.update({
       options: modelCatalog.map((m) => ({ id: m.id, label: m.name && m.name !== m.id ? m.name : m.id, hint: m.providerName })),
-      disabled: modelCatalog.length === 0,
-      placeholder: modelCatalog.length ? "\u641C\u7D22 provider/model" : "\u6A21\u578B\u76EE\u5F55\u672A\u52A0\u8F7D"
+      disabled: n === 0,
+      placeholder: label
     });
+    modelRefreshBtn?.update({ label: "\u5237\u65B0" });
+  }
+  async function refreshModelCatalog() {
+    modelRefreshBtn?.update({ loading: true });
+    try {
+      await loadModelCatalog(true);
+    } finally {
+      modelRefreshBtn?.update({ loading: false });
+    }
   }
   function buildSandboxSettings(wrap) {
     swEnabled = mountSwitch(wrap, {
@@ -2542,15 +2576,14 @@ ${GUEST_UI_LOOK_CSS}`;
         markDirty();
       }
     });
-    modelChipsEl = el2("div", "model-chips");
-    wrap.append(modelChipsEl);
-    const pickRow = el2("div", "save-row");
+    wrap.append(el2("div", "field-caption", "\u653E\u884C\u7684\u6A21\u578B\uFF08\u4E0D\u62E6\u622A\uFF09"));
+    const pickRow = el2("div", "model-picker");
     wrap.append(pickRow);
     selModel = mountSelect(pickRow, {
-      label: "\u6DFB\u52A0\u6A21\u578B",
+      label: "",
       value: null,
       options: [],
-      placeholder: modelCatalog.length ? "\u641C\u7D22 provider/model" : "\u6A21\u578B\u76EE\u5F55\u672A\u52A0\u8F7D",
+      placeholder: "\u9009\u62E9\u6A21\u578B",
       searchable: true,
       searchPlaceholder: "\u641C\u7D22 provider/model",
       disabled: true,
@@ -2563,8 +2596,15 @@ ${GUEST_UI_LOOK_CSS}`;
         markDirty();
       }
     });
+    modelRefreshBtn = mountButton(pickRow, {
+      label: "\u5237\u65B0",
+      variant: "outline",
+      onClick: () => void refreshModelCatalog()
+    });
+    modelChipsEl = el2("div", "model-chips");
+    wrap.append(modelChipsEl);
     tfModels = mountTextField(wrap, {
-      label: "\u653E\u884C\u7684\u6A21\u578B\uFF08\u4E0D\u62E6\u622A\uFF09",
+      label: "\u624B\u52A8\u7F16\u8F91",
       helper: "\u9017\u53F7\u6216\u6362\u884C\u5206\u9694\uFF1B\u652F\u6301 provider/model \u5168\u91CF\u3001\u4EC5\u6A21\u578B\u540D\u5C3E\u6BB5\u5339\u914D\u3001* \u901A\u914D\u3002\u7559\u7A7A = \u5168\u90E8\u53D7\u63A7",
       placeholder: "deepseek-flash, *free*",
       value: "",
@@ -2574,6 +2614,42 @@ ${GUEST_UI_LOOK_CSS}`;
       onChange: (v2) => {
         if (draft) draft.cheapModels = parseModelList(v2);
         renderModelChips(draft?.cheapModels ?? []);
+        markDirty();
+      }
+    });
+    wrap.append(el2("div", "field-caption", "\u653E\u884C\u7684 agent\uFF08\u4E0D\u62E6\u622A\uFF09"));
+    const agentRow = el2("div", "model-picker");
+    wrap.append(agentRow);
+    selAgent = mountSelect(agentRow, {
+      label: "",
+      value: null,
+      options: AGENT_SUGGESTIONS.map((a) => ({ id: a, label: a })),
+      placeholder: "\u9009\u62E9 agent",
+      searchable: true,
+      searchPlaceholder: "\u641C\u7D22 agent \u540D\u79F0",
+      disabled: false,
+      onChange: (id) => {
+        if (!id || !draft) return;
+        if (!draft.passAgents.includes(id)) draft.passAgents.push(id);
+        renderAgentChips(draft.passAgents);
+        tfAgents?.update({ value: draft.passAgents.join("\n") });
+        selAgent?.update({ value: null });
+        markDirty();
+      }
+    });
+    agentChipsEl = el2("div", "model-chips");
+    wrap.append(agentChipsEl);
+    tfAgents = mountTextField(wrap, {
+      label: "\u624B\u52A8\u7F16\u8F91",
+      helper: "\u9017\u53F7\u6216\u6362\u884C\u5206\u9694\uFF1B`*` \u7ED3\u5C3E\u6309\u524D\u7F00\u5339\u914D\uFF08explore* \u547D\u4E2D explore \u7CFB\u5217\uFF09\uFF0C\u5176\u4F59\u7CBE\u786E\u5339\u914D\u3002\u7559\u7A7A = \u5168\u90E8\u53D7\u63A7",
+      placeholder: "general, stock, explore*",
+      value: "",
+      multiline: true,
+      rows: 3,
+      mono: true,
+      onChange: (v2) => {
+        if (draft) draft.passAgents = parseModelList(v2);
+        renderAgentChips(draft?.passAgents ?? []);
         markDirty();
       }
     });
@@ -2650,6 +2726,8 @@ ${GUEST_UI_LOOK_CSS}`;
     tfCap?.update({ value: String(d.exemptionRoundCap) });
     tfModels?.update({ value: d.cheapModels.join("\n") });
     renderModelChips(d.cheapModels);
+    tfAgents?.update({ value: d.passAgents.join("\n") });
+    renderAgentChips(d.passAgents);
     if (force) dirty = false;
     saveBtn?.update({ disabled: !dirty });
     if (!dirty && saveStateEl) saveStateEl.textContent = "";
@@ -2664,7 +2742,8 @@ ${GUEST_UI_LOOK_CSS}`;
       web: cfg.sessionTotals.web,
       command: cfg.sessionTotals.command,
       exemptionRoundCap: cfg.exemptionRoundCap,
-      cheapModels: [...cfg.cheapModels]
+      cheapModels: [...cfg.cheapModels],
+      passAgents: [...cfg.passAgents]
     };
   }
   function sessionLabel() {
@@ -2801,7 +2880,8 @@ ${GUEST_UI_LOOK_CSS}`;
         sessionTotals: { read: d.read, web: d.web, command: d.command },
         exemptionRoundCap: d.exemptionRoundCap,
         exemptSessions: config.exemptSessions,
-        cheapModels: [...d.cheapModels]
+        cheapModels: [...d.cheapModels],
+        passAgents: [...d.passAgents]
       };
       await writeConfigFile(next);
       applyConfig(next, true);

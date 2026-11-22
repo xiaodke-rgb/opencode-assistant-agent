@@ -41,6 +41,9 @@ const DEFAULT_CONFIG = {
   // 放行的模型（成本档）：命中的模型完全不拦、不计数。空 = 关闭这一层。
   // 支持三种写法：`provider/model` 全量、`model` 只比对尾段、含 `*` 通配。
   cheapModels: [],
+  // 放行的 agent：命中的 agent 完全不拦、不计数（子代理默认在列）。
+  // `*` 结尾按前缀匹配（`explore*` 命中 explore 系列），其余按名称精确匹配。
+  passAgents: ["general", "stock"],
 }
 
 const BIG_FILE = 30 * 1024
@@ -396,6 +399,19 @@ function modelAllowed(model, list = cfg.cheapModels) {
   })
 }
 
+// 放行 agent 名的匹配：`*` 结尾按前缀匹配，其余忽略大小写精确匹配。
+function agentAllowed(agent, list = cfg.passAgents) {
+  if (!list.length) return false
+  const value = String(agent ?? "").trim().toLowerCase()
+  if (!value) return false
+  return list.some((raw) => {
+    const want = String(raw ?? "").trim().toLowerCase()
+    if (!want) return false
+    if (want.endsWith("*")) return value.startsWith(want.slice(0, -1))
+    return value === want
+  })
+}
+
 // 当前会话模型来自 session.prompt 事件的 event.model（形状为字符串或
 // {providerID, modelID|id}），工具事件里没有 model 字段，所以在这里记一次。
 function modelFromEvent(event) {
@@ -458,6 +474,7 @@ async function refreshConfig(force) {
     if (Number.isFinite(j.exemptionRoundCap) && j.exemptionRoundCap >= 0) next.exemptionRoundCap = j.exemptionRoundCap
     if (j.exemptSessions && typeof j.exemptSessions === "object") next.exemptSessions = j.exemptSessions
     if (Array.isArray(j.cheapModels)) next.cheapModels = sanitizeModels(j.cheapModels)
+    if (Array.isArray(j.passAgents)) next.passAgents = sanitizeModels(j.passAgents)
     cfg = next
   } catch (err) {
     // 配置读失败用缓存/默认值，不关守卫
@@ -941,7 +958,7 @@ function hasTailFollow(cmd) {
 }
 
 export { sandboxWrap, sandboxDeny, probeSandbox }
-export { modelAllowed, sanitizeModels, modelFromEvent }
+export { modelAllowed, sanitizeModels, modelFromEvent, agentAllowed }
 
 // ---------------------------------------------------------------- tool hook
 async function onTool(event) {
@@ -1002,7 +1019,8 @@ async function onTool(event) {
       }
       return
     }
-    if (agent === "general" || agent === "stock") return
+    // 放行 agent：子代理默认在列（general / stock），命中的完全不拦、不计数。
+    if (agentAllowed(agent)) return
 
     // 成本档：名单里的模型（便宜模型）完全不拦、不计数，自己干。
     // 放在 scout 分支之后，保证子代理沙箱不受名单影响；名单为空时零开销。

@@ -147,7 +147,7 @@ test("沙箱：外部副作用黑名单", () => {
 })
 
 // ---- 成本档：模型白名单（cheapModels）
-import { modelAllowed, sanitizeModels, modelFromEvent } from "./scout.ts"
+import { modelAllowed, sanitizeModels, modelFromEvent, agentAllowed } from "./scout.ts"
 
 test("cheapModels 为空：任何模型都不放行", () => {
   assert.equal(modelAllowed("commandcode/deepseek/deepseek-v4.1-flash", []), false)
@@ -177,4 +177,16 @@ test("modelFromEvent：字符串与对象两种形状", () => {
   assert.equal(modelFromEvent({ model: { providerID: "p", id: "m" } }), "p/m")
   assert.equal(modelFromEvent({ providerID: "p", modelID: "m" }), "p/m")
   assert.equal(modelFromEvent({}), "")
+})
+
+// ---- 放行 agent（passAgents）
+test("passAgents：精确与前缀通配", () => {
+  const list = ["general", "stock", "explore*"]
+  assert.equal(agentAllowed("general", list), true)
+  assert.equal(agentAllowed("GENERAL", list), true)
+  assert.equal(agentAllowed("explore", list), true)
+  assert.equal(agentAllowed("explore-x", list), true)
+  assert.equal(agentAllowed("plan", list), false)
+  assert.equal(agentAllowed("", list), false)
+  assert.equal(agentAllowed("general", []), false)
 })
